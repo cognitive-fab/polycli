@@ -14,7 +14,9 @@ function run(file, args, { cwd, timeout = 8000, input } = {}) {
     const child = execFile(file, args, { cwd, env: ENV(), timeout, windowsHide: true, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
       resolve({ ok: !err, code: err ? (typeof err.code === 'number' ? err.code : -1) : 0, out: String(stdout), err: String(stderr || (err && err.message) || '') });
     });
-    if (input !== undefined) { child.stdin.end(input); }
+    // git may exit before reading stdin (e.g. a failing hook): the EPIPE must not
+    // become an unhandled error in the main process; the exit code reports it.
+    if (input !== undefined) { child.stdin.on('error', () => {}); child.stdin.end(input); }
   });
 }
 const git = (cwd, args, opts) => run('git', ['--no-optional-locks', ...args], { cwd, ...opts });

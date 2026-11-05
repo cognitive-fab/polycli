@@ -137,8 +137,13 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .notice.err { background: #f06a6a14; color: var(--bad); }
 .notice.info { background: #7c8cf814; color: var(--text-dim); }
 .notice .grow { flex: 1; }
-.term { flex: 1; min-height: 0; padding: 6px 0 0 10px; background: var(--bg-term); }
-.term .xterm { height: 100%; }
+.term { flex: 1; min-height: 0; background: var(--bg-term); }
+/* The padding sits on .xterm, not on .term: the fit addon subtracts the terminal
+   element's padding but takes the container's full height, so padding on the
+   container made it fit one row too many and clipped the bottom line. */
+.term .xterm { height: 100%; padding: 6px 0 4px 10px; }
+/* xterm.css paints its viewport (which spans that padding) black; match the theme. */
+.term .xterm, .term .xterm .xterm-viewport { background-color: var(--bg-term) !important; }
 .placeholder { flex: 1; display: grid; place-items: center; color: var(--text-faint); background: var(--bg-term); text-align: center; padding: 20px; }
 
 .empty { flex: 1; display: grid; place-items: center; text-align: center; color: var(--text-dim); }
@@ -174,6 +179,14 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .keys-table td { padding: 5px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
 .ws-chip { display: inline-flex; align-items: center; gap: 4px; margin: 0 6px 2px 0; }
 .ws-chip .ws-color { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+.modal.help-modal { width: 860px; }
+.help h3 { margin: 0 0 8px; font-size: 18px; }
+.help h4 { margin: 18px 0 6px; font-size: 14px; }
+.help p, .help li { color: var(--text-dim); line-height: 1.5; }
+.help b { color: var(--text); font-weight: 600; }
+.help code { font-family: var(--mono); font-size: 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+.help ul, .help ol { padding-left: 20px; margin: 6px 0; }
+.help-img { display: block; max-width: 100%; margin: 10px 0 6px; border: 1px solid var(--line); border-radius: 8px; }
 .modal .error { color: var(--bad); font-size: 12px; min-height: 16px; }
 
 .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--bg-elev); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; z-index: 60; max-width: 70vw; }

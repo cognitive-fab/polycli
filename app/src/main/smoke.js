@@ -276,8 +276,87 @@ async function runGit({ app, win, manager }) {
   app.exit(report.ok ? 0 : 1);
 }
 
+// Screenshots for resources/help (HELP.md). Demo workstreams in a folder inside the
+// trusted smoke area; the Keys list is a demo list, never this machine's variables.
+// Also checks that the terminal's last row isn't clipped.
+async function runHelp({ app, win, manager }) {
+  const report = { phase: 'help', shots: [] };
+  const wc = win.webContents;
+  const HELP = path.join(__dirname, '..', '..', 'resources', 'help');
+  const shot = async (name, selector) => {
+    await sleep(900);
+    try {
+      let rect;
+      if (selector) {
+        rect = await wc.executeJavaScript(`(() => { const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: Math.floor(r.x), y: Math.floor(r.y), width: Math.ceil(r.width), height: Math.ceil(r.height) }; })()`);
+      }
+      const img = await wc.capturePage(rect);
+      fs.writeFileSync(path.join(HELP, `${name}.png`), img.toPNG());
+      report.shots.push(name);
+    } catch (e) { report.shots.push(`${name}: not captured (${e.message || e})`); }
+  };
+  require('./env').globalKeys = async () => ['GITHUB_TOKEN', 'MAPS_API_KEY', 'SENTRY_AUTH_TOKEN', 'STRIPE_SECRET_KEY'].map(name => ({ name, scope: 'user' }));
+  const sids = [];
+  try {
+    const demo = path.join(path.dirname(FOLDER), 'acme-api');
+    fs.mkdirSync(demo, { recursive: true });
+    win.setSize(1400, 860);
+    manager.createWorkstream({ name: 'docs-site', folder: demo, color: '#4cc38a' });
+    manager.createWorkstream({ name: 'billing', folder: demo, color: '#f2b84b' });
+    const ws = manager.createWorkstream({ name: 'acme-api', folder: demo, color: '#7c8cf8' });
+    manager.updateWorkstream({ id: ws.id, env: [{ name: 'ACME_ENV', value: 'staging' }, { name: 'MAPS_API_KEY', value: 'demo' }], uses: ['SENTRY_AUTH_TOKEN', 'STRIPE_SECRET_KEY'] });
+    for (const role of ['tests', 'main']) {
+      const s = await manager.newSession({ workstreamId: ws.id, role, model: 'haiku', effort: 'medium' });
+      sids.push(s.id);
+    }
+    await waitFor(() => sids.every(id => manager.session(id).state === 'idle' && manager.pty.isLive(`s:${id}`)), 90000, 'sessions idle');
+    const sh = manager.newShell({ workstreamId: ws.id });
+    await sleep(2000);
+    manager.setUi({ activeTab: `s:${sids[1]}` });
+    await manager.refreshGit(demo, { pr: true });
+    // The version and model display name arrive with the first statusLine.
+    await waitFor(() => manager.session(sids[1]).header.version, 30000, 'statusLine header').catch(() => {});
+    await sleep(3000);
+
+    // Clipping: rows must fit inside the terminal area.
+    report.fit = await wc.executeJavaScript(`(() => {
+      const host = document.querySelector('[data-term="s:${sids[1]}"]');
+      const screen = host.querySelector('.xterm-screen').getBoundingClientRect();
+      const box = host.getBoundingClientRect();
+      return { screenBottom: Math.round(screen.bottom), hostBottom: Math.round(box.bottom), fits: screen.bottom <= box.bottom + 0.5 };
+    })()`);
+
+    await shot('overview');
+    await shot('header', `[data-session="${sids[1]}"]`);
+    await wc.executeJavaScript(`document.querySelector('[data-act="wsSettings"]').click()`);
+    await sleep(1000);
+    await shot('settings', '#modal');
+    await wc.executeJavaScript(`document.querySelector('[data-cancel]').click()`);
+    await wc.executeJavaScript(`document.querySelector('#keysBtn').click()`);
+    await sleep(1000);
+    await shot('keys', '#modal');
+    await wc.executeJavaScript(`document.querySelector('[data-cancel]').click()`);
+    manager.setUi({ theme: 'light' });
+    await sleep(1500);
+    await shot('light');
+    manager.setUi({ theme: 'system' });
+    await wc.executeJavaScript(`document.querySelector('#helpBtn').click()`);
+    await sleep(1500);
+    report.helpImages = await wc.executeJavaScript(`[...document.querySelectorAll('.help-img')].map(i => i.naturalWidth > 0)`);
+    await manager.closeShell(sh.id);
+    report.ok = report.fit.fits && report.shots.every(x => !x.includes('not captured'));
+  } catch (e) {
+    report.ok = false;
+    report.error = String(e.stack || e);
+  }
+  for (const id of sids) { try { await manager.deleteSession(id); } catch {} }
+  fs.writeFileSync(path.join(OUT, 'help.json'), JSON.stringify(report, null, 2));
+  app.exit(report.ok ? 0 : 1);
+}
+
 async function run(ctx) {
   fs.mkdirSync(OUT, { recursive: true });
+  if (process.env.POLYCLI_SMOKE === 'help') return runHelp(ctx);
   if (process.env.POLYCLI_SMOKE === 'git') return runGit(ctx);
   if (process.env.POLYCLI_SMOKE === 'ui') return runUi(ctx);
   if (process.env.POLYCLI_SMOKE === 'clip') return runClip(ctx);

@@ -44,6 +44,10 @@ polycli writes only to `%APPDATA%\polycli`: state (workstream variable values en
 - The Cowork bridge and the artifacts panel.
 - WSL.
 
+## Help
+
+[`resources/help/HELP.md`](resources/help/HELP.md) is the user guide; the app shows it under **? Help**. Its screenshots are made by `node scripts/smoke.js help` (demo workstreams, a demo key list).
+
 ## Tests
 
 - `npm run smoke` drives the real app end to end: new session → prompt → close → reopen → restart → prompt → shell → delete. It uses Haiku in `spikes/0ab-bg/run/cwd` with an isolated home, and writes `out/smoke.json` and screenshots.

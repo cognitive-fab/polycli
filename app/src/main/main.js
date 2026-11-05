@@ -61,6 +61,7 @@ const OPS = {
   renameWorkstream: a => manager.renameWorkstream(a),
   updateWorkstream: a => manager.updateWorkstream(a),
   globalKeys: () => require('./env').globalKeys(),
+  helpText: () => require('fs').readFileSync(path.join(__dirname, '..', '..', 'resources', 'help', 'HELP.md'), 'utf8'),
   gitFiles: a => manager.gitFiles(a.id),
   commitSession: a => manager.commitSession({ id: a.id, message: a.message, all: a.all }),
   pushSession: a => manager.pushSession({ id: a.id }),

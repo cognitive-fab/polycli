@@ -33,9 +33,10 @@ const dirKey = d => path.resolve(d).toLowerCase();
 // `claude agents --json`: a session whose process runs has a `pid` and a `status`
 // (idle / busy). `state` is the task state shown in agent view: blocked (waiting for
 // input), working, done (the task is finished; the process may still run, e.g. after
-// a turn that completed the work), stopped. So `done` alone does not mean ended:
-// only a missing entry or a missing pid does.
-const running = e => !!e && e.pid != null;
+// a turn that completed the work), stopped. So `done` alone does not mean ended.
+// A freshly launched session has no pid yet for a few seconds (more under load) and
+// reads `blocked`. Ended = no entry, or no pid together with `stopped` / `done`.
+const running = e => !!e && (e.pid != null || !['stopped', 'done'].includes(e.state));
 const waiting = e => e.status === 'idle' || e.state === 'blocked';
 
 const newId = () => crypto.randomUUID();
@@ -108,7 +109,7 @@ class Manager extends EventEmitter {
   }
   snapshot() {
     return {
-      workstreams: this.state.workstreams.map(w => ({ ...w, env: (w.env || []).map(e => ({ name: e.name })), uses: w.uses || [], envRev: w.envRev || 0 })),
+      workstreams: this.state.workstreams.map(w => ({ ...w, env: (w.env || []).map(e => ({ name: e.name })), uses: w.uses || [], envRev: w.envRev || 0, folderShort: tildify(w.folder) })),
       sessions: this.state.sessions.map(s => {
         const here = s.liveCwd || s.cwd;
         const g = this.gitByDir.get(dirKey(here));
@@ -459,7 +460,9 @@ class Manager extends EventEmitter {
     const s = this.state.sessions.find(x => x.id === id);
     if (!s) return;
     if (kind === 't') {
-      // Trust pane closed: launch if the user accepted the prompt.
+      // Closed or deleted by polycli (or mid-action): don't launch anything.
+      if (expected || this.ops.get(s.id) || !s.open) return this.changed();
+      // Trust pane closed by the user: launch if they accepted the prompt.
       if (claude.isTrusted(s.cwd)) this.launch(s);
       else this.set(s, { state: 'untrusted', error: 'The folder is not trusted yet. Open the trust prompt again and accept it, then type /exit.' });
       return;
@@ -508,7 +511,7 @@ class Manager extends EventEmitter {
         if (s.state === 'starting' || s.state === 'detached') return this.set(s, { state: 'idle' });
         return this.changed();
       case 'SessionStart':
-        if (!['busy', 'needs-you'].includes(s.state)) this.set(s, { state: 'idle' });
+        if (!['busy', 'needs-you', 'closed'].includes(s.state)) this.set(s, { state: 'idle' });
         return this.changed();
       case 'UserPromptSubmit':
         this.blockedPolls.delete(s.id);
@@ -564,34 +567,43 @@ class Manager extends EventEmitter {
     this.gitTimers.set(k, setTimeout(() => { this.gitTimers.delete(k); this.refreshGit(dir); }, ms));
   }
   // One refresh per folder at a time; sessions sharing a folder share the result.
-  async refreshGit(dir, { pr = false } = {}) {
-    if (this.disposed) return;
+  // A refresh asked for while one runs is queued (at most one, merged), so a caller
+  // that awaits it, like Commit and Push, always gets a read made after its change.
+  refreshGit(dir, { pr = false } = {}) {
+    if (this.disposed) return Promise.resolve();
     const k = dirKey(dir);
-    const g = this.gitByDir.get(k) || { at: 0, prAt: 0 };
-    if (g.busy) return;
-    g.busy = true;
-    this.gitByDir.set(k, g);
-    try {
-      const before = JSON.stringify([g.info, g.repo, g.pr, g.deploy]);
-      g.info = await gitinfo.status(dir);
-      if (g.info) {
-        if (g.repo === undefined || now() - g.at > 5 * 60000) {
-          g.repo = (await gitinfo.github(dir)).repo || null;
-          g.deploy = await gitinfo.detectDeploy(dir);
-        }
-        if (g.repo && g.info.branch && (pr || now() - g.prAt > PR_STALE_MS)) {
-          g.pr = await gitinfo.pullRequest(dir);
-          g.prAt = now();
-        }
-      } else {
-        g.repo = null; g.pr = null; g.deploy = null;
-      }
-      g.at = now();
-      if (JSON.stringify([g.info, g.repo, g.pr, g.deploy]) !== before) this.changed();
-    } finally {
-      g.busy = false;
-    }
+    let g = this.gitByDir.get(k);
+    if (!g) this.gitByDir.set(k, g = { at: 0, prAt: 0 });
+    if (g.queued) { g.queued.pr = g.queued.pr || pr; return g.queued.promise; }
+    const q = { pr };
+    g.queued = q;
+    q.promise = (g.running || Promise.resolve()).catch(() => {}).then(() => {
+      g.queued = null;
+      return (g.running = this.readGit(dir, g, q.pr));
+    }).finally(() => { if (!g.queued) g.running = null; });
+    return q.promise;
   }
+  async readGit(dir, g, pr) {
+    if (this.disposed) return;
+    const before = JSON.stringify([g.info, g.repo, g.pr, g.deploy]);
+    g.info = await gitinfo.status(dir);
+    if (g.info) {
+      if (g.repo === undefined || now() - g.at > 5 * 60000) {
+        g.repo = (await gitinfo.github(dir)).repo || null;
+        g.deploy = await gitinfo.detectDeploy(dir);
+      }
+      if (!g.repo || !g.info.branch) g.pr = null;   // origin changed or removed, or detached
+      else if (pr || now() - g.prAt > PR_STALE_MS) {
+        g.pr = await gitinfo.pullRequest(dir);
+        g.prAt = now();
+      }
+    } else {
+      g.repo = undefined; g.pr = null; g.deploy = null;   // re-read all if it becomes a repo
+    }
+    g.at = now();
+    if (JSON.stringify([g.info, g.repo, g.pr, g.deploy]) !== before) this.changed();
+  }
+
   // Commit and Push act on the folder the session is in. Not while Claude is working
   // or waiting on a prompt: files may be half edited.
   gitTarget(id) {

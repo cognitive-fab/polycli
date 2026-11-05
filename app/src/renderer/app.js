@@ -75,7 +75,7 @@ systemDark.addEventListener('change', () => applyTheme());
 function render() {
   applyTheme();
   const ws = activeWs();
-  $('#topTitle').textContent = ws ? `${ws.name} · ${ws.folder}` : '';
+  $('#topTitle').textContent = ws ? `${ws.name} · ${ws.folderShort || ws.folder}` : '';
   renderInbox();
   renderRail();
   renderTabs();
@@ -382,6 +382,7 @@ function modal(html, onSubmit, { wide = false } = {}) {
   const back = $('#modalBack'), form = $('#modal');
   form.innerHTML = html + `<div class="error" id="modalErr"></div>`;
   form.classList.toggle('wide', wide);
+  form.classList.remove('help-modal');
   back.hidden = false;
   const close = () => { back.hidden = true; form.onsubmit = null; };
   let busy = false;
@@ -553,6 +554,52 @@ function deployDialog(s) {
   form.querySelector('.btn.primary').focus();
 }
 
+// ---------------- help ----------------
+// resources/help/HELP.md is the single source (GitHub shows it too). This renders the
+// subset it uses: headings, paragraphs, lists, bold, inline code and images that are
+// plain file names next to it. Everything is escaped first.
+function mdInline(t) {
+  return esc(t)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+    .replace(/(^|[^\w*])\*([^*\s][^*]*)\*(?!\w)/g, '$1<i>$2</i>');
+}
+function markdown(src) {
+  const out = [];
+  let list = null, para = [];
+  const flush = () => {
+    if (para.length) { out.push(`<p>${mdInline(para.join(' '))}</p>`); para = []; }
+    if (list) { out.push(`</${list}>`); list = null; }
+  };
+  for (const raw of src.split(/\r?\n/)) {
+    const line = raw.trimEnd();
+    let m;
+    if (!line.trim()) { flush(); continue; }
+    if ((m = /^(#{1,3}) (.*)$/.exec(line))) { flush(); out.push(`<h${m[1].length + 2}>${mdInline(m[2])}</h${m[1].length + 2}>`); continue; }
+    if ((m = /^!\[([^\]]*)\]\(([\w.-]+\.png)\)$/.exec(line))) { flush(); out.push(`<img class="help-img" alt="${esc(m[1])}" src="../../resources/help/${m[2]}">`); continue; }
+    if ((m = /^(- |\d+\. )(.*)$/.exec(line))) {
+      if (para.length) { out.push(`<p>${mdInline(para.join(' '))}</p>`); para = []; }
+      const tag = m[1] === '- ' ? 'ul' : 'ol';
+      if (list !== tag) { if (list) out.push(`</${list}>`); out.push(`<${tag}>`); list = tag; }
+      out.push(`<li>${mdInline(m[2])}</li>`);
+      continue;
+    }
+    if (list) { out.push(`</${list}>`); list = null; }
+    para.push(line.trim());
+  }
+  flush();
+  return out.join('\n');
+}
+async function helpDialog() {
+  const md = await call('helpText');
+  const form = modal(`<div class="help">${markdown(md)}</div>
+    <div class="modal-actions"><button type="button" class="btn" data-cancel hidden></button><button class="btn primary">Close</button></div>`,
+  async () => {}, { wide: true });
+  form.classList.add('help-modal');
+  form.scrollTop = 0;
+  form.querySelector('.btn.primary').focus({ preventScroll: true });
+}
+
 // ---------------- events ----------------
 function openVSCode(args, e) {
   call('openVSCode', { ...args, root: !!e?.shiftKey, mode: e?.ctrlKey ? 'new' : 'reuse' }).then(() => toast('Opening VS Code…'));
@@ -627,6 +674,7 @@ $('#themeBtn').onclick = () => {
   call('setUi', { theme: next });
 };
 $('#keysBtn').onclick = () => keysDialog();
+$('#helpBtn').onclick = () => helpDialog();
 $('#inboxBtn').onclick = e => { e.stopPropagation(); $('#inboxMenu').hidden = !$('#inboxMenu').hidden; };
 
 api.onState(s => { S = s; render(); });
