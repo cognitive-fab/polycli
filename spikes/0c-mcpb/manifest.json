@@ -1,0 +1,25 @@
+{
+  "manifest_version": "0.3",
+  "name": "polycli-spike",
+  "display_name": "polycli (spike)",
+  "version": "0.0.1",
+  "description": "polycli bridge spike: checks that Cowork can call a host-side extension and logs caller identity and timeouts.",
+  "author": { "name": "polycli" },
+  "server": {
+    "type": "node",
+    "entry_point": "server/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server/index.js"]
+    }
+  },
+  "tools": [
+    { "name": "polycli_ping", "description": "Waits delay_seconds, then returns. Measures the per-call timeout." },
+    { "name": "polycli_whoami", "description": "Reports server pid, client info and request metadata." }
+  ],
+  "compatibility": {
+    "platforms": ["win32"],
+    "runtimes": { "node": ">=18.0.0" }
+  },
+  "license": "MIT"
+}
