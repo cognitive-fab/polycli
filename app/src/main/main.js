@@ -1,6 +1,6 @@
 'use strict';
 const path = require('path');
-const { app, BrowserWindow, ipcMain, dialog, Notification, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Notification, Menu, clipboard } = require('electron');
 const { paths, ensureDirs } = require('./paths');
 const { installHelpers, HookServer } = require('./hooks');
 const { PtyClient } = require('./ptyclient');
@@ -59,6 +59,8 @@ const OPS = {
   state: () => manager.snapshot(),
   createWorkstream: a => manager.createWorkstream(a),
   renameWorkstream: a => manager.renameWorkstream(a),
+  updateWorkstream: a => manager.updateWorkstream(a),
+  globalKeys: () => require('./env').globalKeys(),
   setActive: a => manager.setActive(a.id),
   setUi: a => manager.setUi(a),
   newSession: a => manager.newSession(a).then(s => s.id),
@@ -71,6 +73,7 @@ const OPS = {
   closeShell: a => manager.closeShell(a.id),
   scrollback: a => manager.pty.scrollback(String(a.term)),
   openVSCode: async a => { await vscode.open(vscodeTarget(a), { mode: a.mode === 'new' ? 'new' : 'reuse', root: !!a.root }); },
+  copyText: a => clipboard.writeText(String(a.text ?? '').slice(0, 1 << 20)),
   pickFolder: async a => {
     const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'], defaultPath: a && a.defaultPath });
     return r.canceled ? null : r.filePaths[0];

@@ -5,12 +5,14 @@ const fs = require('fs');
 const path = require('path');
 
 const root = path.join(__dirname, '..');
-const home = path.join(root, 'out', 'smoke-home');
+const mode = process.argv[2] || '1';
+// One home and pipe per mode, so a run left hanging doesn't block the next one.
+const home = path.join(root, 'out', `smoke-home-${mode}`);
 fs.rmSync(home, { recursive: true, force: true });
 const folder = process.env.POLYCLI_SMOKE_FOLDER || path.join(root, '..', 'spikes', '0ab-bg', 'run', 'cwd');
 
 const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(CLAUDE|ELECTRON_RUN_AS_NODE)/.test(k)));
-Object.assign(env, { POLYCLI_SMOKE: process.argv[2] || '1', POLYCLI_HOME: home, POLYCLI_PIPE: 'polycli-smoke', POLYCLI_SMOKE_FOLDER: folder });
+Object.assign(env, { POLYCLI_SMOKE: mode, POLYCLI_HOME: home, POLYCLI_PIPE: `polycli-smoke-${mode}-${process.pid}`, POLYCLI_SMOKE_FOLDER: folder });
 
 const electron = require('electron');
 const child = spawn(electron, [root], { env, stdio: ['ignore', 'pipe', 'pipe'] });

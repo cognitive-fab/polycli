@@ -28,12 +28,16 @@ function toast(msg, err = false) {
   t.textContent = msg; t.className = 'toast' + (err ? ' err' : ''); t.hidden = false;
   clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, err ? 6000 : 2500);
 }
+function copyText(text, label) {
+  call('copyText', { text }).then(() => toast(label || `Copied ${text.length} character${text.length === 1 ? '' : 's'}`));
+}
 const activeWs = () => S.workstreams.find(w => w.id === S.ui.activeWorkstream) || null;
 const sessionsOf = wid => S.sessions.filter(s => s.workstreamId === wid);
 const shellsOf = wid => S.shells.filter(h => h.workstreamId === wid);
 const isOpenSession = s => s.open || s.termLive || s.trustLive;
 function wsState(wid) {
   const st = sessionsOf(wid).filter(isOpenSession).map(s => s.state);
+  if (shellsOf(wid).some(h => h.state === 'running')) st.push('idle');
   return WORST.find(x => st.includes(x)) || 'closed';
 }
 function tabsOf(wid) {
@@ -86,6 +90,7 @@ function renderRail() {
           <button class="chip" data-act="newClaude">+ Claude</button>
           <button class="chip" data-act="newShell">+ Shell</button>
           <button class="chip" data-act="wsCode" title="Open the workstream folder in VS Code">VS Code</button>
+          <button class="chip" data-act="wsSettings" title="Name, color, environment variables and the global keys this workstream uses">⚙ Settings${(w.env || []).length ? ` · ${w.env.length} var${w.env.length === 1 ? '' : 's'}` : ''}</button>
         </div>
       </div>`;
     }
@@ -120,13 +125,16 @@ function headerLines(s) {
   return `<div class="banner-lines">
     <div class="l1">${version}</div>
     <div class="l2">${esc(model)}${effort}${plan}</div>
-    <div class="l3"><button class="cwd" data-act="code" title="Open in VS Code (Shift: git root, Ctrl: new window)">${esc(s.cwdShort)}</button>${h.branch ? `<span class="branch">⎇ ${esc(h.branch)}</span>` : ''}</div>
+    <div class="l3"><button class="cwd" data-act="code" title="Open in VS Code (Shift: git root, Ctrl: new window)">${esc(s.cwdShort)}</button>${h.branch ? `<span class="branch">⎇ ${esc(h.branch)}</span>` : ''}${s.bgId ? `<button class="sid" data-act="copy-id" title="Copy &quot;claude attach ${esc(s.bgId)}&quot; to continue in any terminal. That terminal takes the session over; Take back returns it here.">⧉ ${esc(s.bgId)}</button>` : ''}</div>
   </div>`;
 }
 
 function noticeFor(s) {
   if (s.state === 'untrusted') return `<div class="notice warn"><span class="grow">This folder isn't trusted by Claude Code yet. Answer the trust prompt below, then type <b>/exit</b>; polycli starts the session right after.</span>${s.trustLive ? '' : '<button class="btn" data-act="retrust">Show trust prompt</button>'}</div>`;
   if (s.state === 'needs-you') return `<div class="notice warn"><span class="grow">${esc(s.attention?.message || 'Claude needs your attention')}</span></div>`;
+  if (s.elsewhere && !s.termLive) return `<div class="notice info"><span class="grow">Attached in another terminal (<code>claude attach ${esc(s.bgId)}</code>). The session keeps running there.</span><button class="btn" data-act="reopen">Take back</button></div>`;
+  const w = S.workstreams.find(x => x.id === s.workstreamId);
+  if (w && s.state !== 'closed' && (s.envRev || 0) !== (w.envRev || 0)) return `<div class="notice info"><span class="grow">The workstream's environment variables changed. Restart the session to apply them (the conversation is kept).</span><button class="btn" data-act="restart">⟳ Restart</button></div>`;
   if (s.state === 'failed') return `<div class="notice err"><span class="grow">${esc(s.error || 'The session failed to start.')}</span><button class="btn" data-act="restart">Try again</button></div>`;
   if (s.state === 'detached' && !s.termLive) return `<div class="notice info"><span class="grow">Detached. The session keeps running in the background.</span><button class="btn" data-act="reopen">Reattach</button></div>`;
   if (s.error) return `<div class="notice err"><span class="grow">${esc(s.error)}</span></div>`;
@@ -166,10 +174,12 @@ function renderPanes() {
         </div></div>${noticeFor(s)}`;
       top.dataset.session = s.id;
       const live = trust ? s.trustLive : s.termLive;
-      showTerm(pane, termId, live || terms.has(termId), live ? '' : s.state === 'starting' ? 'Starting the session…' : s.state === 'closed' ? 'Closed. Reopen it from the Closed list.' : 'Not attached.');
+      showTerm(pane, termId, live || terms.has(termId), live ? '' : s.elsewhere ? 'Attached in another terminal.' : s.state === 'starting' ? 'Starting the session…' : s.state === 'closed' ? 'Closed. Reopen it from the Closed list.' : 'Not attached.');
     } else {
       const h = t.rec;
-      top.innerHTML = `<div class="notice info"><span class="grow">${esc(h.command)} · <button class="cwd btn" data-act="code-shell" style="font-family:var(--mono)">${esc(h.cwdShort)}</button></span>${h.state !== 'running' ? '<button class="btn" data-act="restart-shell">Restart shell</button>' : ''}</div>`;
+      const hw = S.workstreams.find(x => x.id === h.workstreamId);
+      const stale = hw && h.state === 'running' && (h.envRev || 0) !== (hw.envRev || 0);
+      top.innerHTML = `<div class="notice info"><span class="grow">${esc(h.command)} · <button class="cwd btn" data-act="code-shell" style="font-family:var(--mono)">${esc(h.cwdShort)}</button>${stale ? ' · environment variables changed; open a new shell to get them' : ''}</span>${h.state !== 'running' ? '<button class="btn" data-act="restart-shell">Restart shell</button>' : ''}</div>`;
       top.dataset.shell = h.id;
       showTerm(pane, termId, true, '');
     }
@@ -203,11 +213,14 @@ function showTerm(pane, termId, live, placeholder) {
   ph?.remove();
   host.hidden = false;
   if (host.dataset.term === termId) return;
-  // The pane switched terminals (trust prompt → session): start a fresh xterm.
+  // The pane switched terminals (trust prompt → session): drop the xterm it showed
+  // before, and any stale one for the new id, then start a fresh xterm.
+  for (const id of new Set([host.dataset.term, termId])) {
+    const old = id && terms.get(id);
+    if (old) { old.ro.disconnect(); old.term.dispose(); terms.delete(id); }
+  }
   host.innerHTML = '';
   host.dataset.term = termId;
-  const old = terms.get(termId);
-  if (old) { old.ro.disconnect(); old.term.dispose(); terms.delete(termId); }
   mountTerm(host, termId);
 }
 
@@ -223,22 +236,81 @@ function mountTerm(host, termId) {
   const t = { term, fit, el: host, ro: null, ready: false, queue: [] };
   terms.set(termId, t);
   term.onData(d => api.write(termId, d));
+  // Copy and paste work like Windows Terminal: drag selects, Ctrl+C copies when there
+  // is a selection (otherwise it goes to the session as usual), Ctrl+Shift+C never
+  // reaches the session. Pasting is left to the browser's paste event, which xterm
+  // turns into one bracketed paste; handling Ctrl+V here as well pasted twice.
   term.attachCustomKeyEventHandler(e => {
-    if (e.type !== 'keydown') return true;
+    if (!e.ctrlKey || e.altKey) return true;
     const k = e.key.toLowerCase();
-    if (e.ctrlKey && k === 'c' && term.hasSelection()) { navigator.clipboard.writeText(term.getSelection()); term.clearSelection(); return false; }
-    if (e.ctrlKey && k === 'v') { navigator.clipboard.readText().then(x => x && term.paste(x)); return false; }
+    if (k === 'v') return false;
+    if (k === 'c' && (e.shiftKey || term.hasSelection())) {
+      if (e.type === 'keydown' && term.hasSelection()) { copyText(term.getSelection()); term.clearSelection(); }
+      return false;
+    }
+    return true;
+  });
+  if (!termId.startsWith('h:')) keepSelectionLocal(term);
+  // OSC 52: a program in the terminal sets the clipboard. Writes only; requests to
+  // read the clipboard are ignored, and so is the scrollback replayed on mount.
+  term.parser.registerOscHandler(52, data => {
+    const b64 = data.slice(data.indexOf(';') + 1);
+    if (!t.replayed || !b64 || b64 === '?') return true;
+    try {
+      const text = new TextDecoder().decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0)));
+      if (text) copyText(text);
+    } catch {}
     return true;
   });
   t.ro = new ResizeObserver(() => fitTerm(t));
   t.ro.observe(host);
   api.call('scrollback', { term: termId }).then(buf => {
+    if (terms.get(termId) !== t) return;   // replaced or disposed meanwhile
     if (buf) term.write(buf);
     for (const d of t.queue) term.write(d);
+    term.write('', () => { t.replayed = true; });
     t.queue = null; t.ready = true;
     fitTerm(t);
   });
   t.id = termId;
+}
+
+// Claude Code turns on mouse reporting. xterm then hands every drag to Claude instead
+// of selecting, so Ctrl+C found no selection, reached Claude and cleared the prompt.
+// In Claude panes polycli keeps mouse reporting off (drag selects, as in a plain
+// terminal) and still forwards the wheel, so Claude's transcript scrolls.
+const MOUSE_MODES = new Set([9, 1000, 1001, 1002, 1003, 1005, 1006, 1015, 1016]);
+function keepSelectionLocal(term) {
+  let tracking = false, sgr = false;
+  const num = p => (Array.isArray(p) ? p[0] : p);
+  const track = final => params => {
+    const mouse = params.filter(p => MOUSE_MODES.has(num(p)));
+    if (!mouse.length) return false;
+    const on = final === 'h';
+    for (const p of mouse) {
+      if ([1000, 1002, 1003].includes(num(p))) tracking = on;
+      if (num(p) === 1006) sgr = on;
+    }
+    // Mouse modes are swallowed, so xterm never enters mouse mode; any other modes in
+    // the same sequence (e.g. CSI ? 1000;2004 h) are passed on.
+    const rest = params.filter(p => !MOUSE_MODES.has(num(p)));
+    if (rest.length) term.write(`\x1b[?${rest.map(p => [].concat(p).join(':')).join(';')}${final}`);
+    return true;
+  };
+  term.parser.registerCsiHandler({ prefix: '?', final: 'h' }, track('h'));
+  term.parser.registerCsiHandler({ prefix: '?', final: 'l' }, track('l'));
+  // Wheel reports are sent in SGR encoding (what Claude Code asks for); for any other
+  // encoding the wheel keeps xterm's default behavior.
+  term.attachCustomWheelEventHandler(e => {
+    if (!tracking || !sgr || e.shiftKey || !e.deltaY) return true;
+    const r = term.element.querySelector('.xterm-screen').getBoundingClientRect();
+    const col = Math.min(term.cols, Math.max(1, Math.ceil((e.clientX - r.left) / (r.width / term.cols))));
+    const row = Math.min(term.rows, Math.max(1, Math.ceil((e.clientY - r.top) / (r.height / term.rows))));
+    const lines = Math.max(1, Math.min(5, Math.round(Math.abs(e.deltaY) / 40)));
+    term.input(`\x1b[<${e.deltaY < 0 ? 64 : 65};${col};${row}M`.repeat(lines), false);
+    e.preventDefault();
+    return false;
+  });
 }
 
 function fitTerm(t) {
@@ -251,15 +323,22 @@ function fitTerm(t) {
 }
 
 // ---------------- dialogs ----------------
-function modal(html, onSubmit) {
+function modal(html, onSubmit, { wide = false } = {}) {
   const back = $('#modalBack'), form = $('#modal');
   form.innerHTML = html + `<div class="error" id="modalErr"></div>`;
+  form.classList.toggle('wide', wide);
   back.hidden = false;
   const close = () => { back.hidden = true; form.onsubmit = null; };
+  let busy = false;
   form.onsubmit = async e => {
     e.preventDefault();
+    if (busy) return;   // a double click or a repeated Enter submits once
+    busy = true;
+    const submit = form.querySelector('.modal-actions .primary');
+    if (submit) submit.disabled = true;
     try { await onSubmit(new FormData(form), form); close(); }
     catch (err) { $('#modalErr').textContent = String(err.message || err).replace(/^Error invoking remote method 'polycli': (Error: )?/, ''); }
+    finally { busy = false; if (submit) submit.disabled = false; }
   };
   form.querySelector('[data-cancel]').onclick = close;
   back.onkeydown = e => { if (e.key === 'Escape') close(); };
@@ -301,11 +380,80 @@ function newSessionDialog(ws) {
     </div>
     <div class="modal-actions"><button type="button" class="btn" data-cancel>Cancel</button><button class="btn primary">Start session</button></div>`,
   async fd => {
-    const p = call('newSession', { workstreamId: ws.id, role: fd.get('role'), cwd: fd.get('cwd').trim(), model: fd.get('model'), effort: fd.get('effort') });
-    await new Promise(r => setTimeout(r, 0));
-    p.catch(() => {});
+    await api.call('newSession', { workstreamId: ws.id, role: fd.get('role'), cwd: fd.get('cwd').trim(), model: fd.get('model'), effort: fd.get('effort') });
   });
   browseButton(form, 'cwd');
+}
+
+const BILLING_VARS = /^(ANTHROPIC_|CLAUDE_CODE_USE_)/i;
+
+// Workstream settings: name, color, environment variables (stored encrypted, values
+// never shown again) and the global keys this workstream relies on.
+async function wsSettingsDialog(ws) {
+  let color = ws.color;
+  const globals = await call('globalKeys').catch(() => []);
+  const uses = new Set(ws.uses || []);
+  const envRow = (name = '', existing = false) => `<div class="env-row" ${existing ? 'data-existing="1"' : ''}>
+      <input class="env-name" value="${esc(name)}" placeholder="NAME" spellcheck="false" ${existing ? 'readonly title="Remove and add again to rename"' : ''}>
+      <input class="env-value" type="password" autocomplete="off" placeholder="${existing ? 'saved · type to replace' : 'value'}">
+      <button type="button" class="btn env-del" title="Remove">✕</button>
+    </div>`;
+  const form = modal(`<h3>${esc(ws.name)} · settings</h3>
+    <div class="row">
+      <label class="field"><span>Name</span><input name="name" value="${esc(ws.name)}" maxlength="60" required></label>
+      <div class="field" style="flex:none"><span>Color</span><div class="swatches">${COLORS.map(c => `<button type="button" class="swatch ${c === color ? 'sel' : ''}" data-color="${c}" style="background:${c}"></button>`).join('')}</div></div>
+    </div>
+    <div class="field"><span>Environment variables for this workstream</span>
+      <div id="envRows">${(ws.env || []).map(e => envRow(e.name, true)).join('')}</div>
+      <div><button type="button" class="btn" id="envAdd">+ Add variable</button></div>
+      <div class="hint" id="envWarn"></div>
+      <div class="hint">Every Claude session and new shell in this workstream gets them, on top of your Windows variables (a workstream value wins). Values are stored encrypted for your Windows account and are not shown again. When a session starts they are written into its settings file under %APPDATA%\\polycli\\run, which Claude reads. Running sessions pick up changes on Restart.</div>
+    </div>
+    <div class="field"><span>Global keys this workstream uses (for your own tracking; every session already has them)</span>
+      <div class="key-checks">${globals.length ? globals.map(g => `<label class="key-check"><input type="checkbox" name="uses" value="${esc(g.name)}" ${uses.has(g.name) ? 'checked' : ''}><code>${esc(g.name)}</code>${g.scope === 'machine' ? '<small>machine</small>' : ''}</label>`).join('') : '<span class="hint">No key-like Windows variables found.</span>'}</div>
+    </div>
+    <div class="modal-actions"><button type="button" class="btn" data-cancel>Cancel</button><button class="btn primary">Save</button></div>`,
+  async (fd, f) => {
+    const env = [...f.querySelectorAll('.env-row')].map(r => {
+      const name = r.querySelector('.env-name').value.trim();
+      const value = r.querySelector('.env-value').value;
+      return r.dataset.existing && !value ? { name } : { name, value };
+    }).filter(e => e.name || e.value);
+    await api.call('updateWorkstream', { id: ws.id, name: fd.get('name'), color, env, uses: fd.getAll('uses') });
+    toast('Workstream saved');
+  }, { wide: true });
+  const rows = form.querySelector('#envRows');
+  const warn = () => {
+    const names = [...rows.querySelectorAll('.env-name')].map(i => i.value.trim()).filter(n => BILLING_VARS.test(n));
+    form.querySelector('#envWarn').innerHTML = names.length ? `<span class="warn-text">${names.map(esc).join(', ')} change${names.length === 1 ? 's' : ''} how Claude itself signs in and bills (an API key here moves this workstream off your Claude plan).</span>` : '';
+  };
+  form.querySelector('#envAdd').onclick = () => { rows.insertAdjacentHTML('beforeend', envRow()); rows.lastElementChild.querySelector('.env-name').focus(); };
+  rows.addEventListener('click', e => { if (e.target.closest('.env-del')) { e.target.closest('.env-row').remove(); warn(); } });
+  rows.addEventListener('input', warn);
+  warn();
+  form.querySelectorAll('[data-color]').forEach(b => b.onclick = () => {
+    color = b.dataset.color;
+    form.querySelectorAll('.swatch').forEach(x => x.classList.toggle('sel', x === b));
+  });
+}
+
+// Global keys: the key-like variables saved in Windows (names only), which workstreams
+// say they use, and which workstreams set their own value.
+async function keysDialog() {
+  const globals = await call('globalKeys');
+  const usedBy = n => S.workstreams.filter(w => (w.uses || []).includes(n));
+  const setIn = n => S.workstreams.filter(w => (w.env || []).some(e => e.name.toUpperCase() === n.toUpperCase()));
+  const chips = ws => ws.map(w => `<span class="ws-chip"><span class="ws-color" style="background:${esc(w.color)}"></span>${esc(w.name)}</span>`).join('');
+  const local = S.workstreams.flatMap(w => (w.env || []).map(e => ({ w, name: e.name }))).filter(x => !globals.some(g => g.name.toUpperCase() === x.name.toUpperCase()));
+  const form = modal(`<h3>Keys</h3>
+    <div class="hint" style="margin-bottom:10px">Key-like variables saved in Windows (names only). Every Claude session and shell gets them. Mark which workstreams use each one in the workstream's ⚙ Settings.</div>
+    <table class="keys-table"><thead><tr><th>Variable</th><th>Used by</th><th>Own value in</th></tr></thead><tbody>
+      ${globals.map(g => { const u = usedBy(g.name), o = setIn(g.name); return `<tr><td><code>${esc(g.name)}</code>${g.scope === 'machine' ? ' <small>machine</small>' : ''}</td><td>${u.length ? chips(u) : '<span class="hint">not assigned</span>'}</td><td>${chips(o)}</td></tr>`; }).join('') || '<tr><td colspan="3" class="hint">No key-like Windows variables found.</td></tr>'}
+    </tbody></table>
+    ${local.length ? `<h3 style="margin-top:16px">Workstream-only variables</h3><table class="keys-table"><tbody>${local.map(x => `<tr><td><code>${esc(x.name)}</code></td><td>${chips([x.w])}</td></tr>`).join('')}</tbody></table>` : ''}
+    <div class="modal-actions"><button type="button" class="btn" data-cancel hidden></button><button class="btn primary">Close</button></div>`,
+  async () => {}, { wide: true });
+  form.querySelector('.btn.primary').focus();
 }
 
 // ---------------- events ----------------
@@ -349,11 +497,13 @@ document.addEventListener('click', async e => {
   if (act === 'newClaude' && ws) return newSessionDialog(ws);
   if (act === 'newShell' && ws) return call('newShell', { workstreamId: ws.id });
   if (act === 'wsCode' && ws) return openVSCode({ workstreamId: ws.id }, e);
+  if (act === 'wsSettings' && ws) return wsSettingsDialog(ws);
   if (act === 'code' && sid) return openVSCode({ sessionId: sid }, e);
   if (act === 'code-shell' && hid) return openVSCode({ shellId: hid }, e);
   if (act === 'restart-shell' && hid) return call('restartShell', { id: hid });
   if (act === 'close' && sid) return call('closeSession', { id: sid });
   if (act === 'reopen' && sid) return call('reopenSession', { id: sid });
+  if (act === 'copy-id' && sid) { const s = S.sessions.find(x => x.id === sid); if (s?.bgId) copyText(`claude attach ${s.bgId}`, `Copied: claude attach ${s.bgId}`); return; }
   if ((act === 'restart' || act === 'retrust') && sid) return call('restartSession', { id: sid });
   if (act === 'delete' && sid) {
     const s = S.sessions.find(x => x.id === sid);
@@ -365,6 +515,7 @@ document.addEventListener('click', async e => {
 });
 
 $('#addWs').onclick = newWorkstreamDialog;
+$('#keysBtn').onclick = () => keysDialog();
 $('#inboxBtn').onclick = e => { e.stopPropagation(); $('#inboxMenu').hidden = !$('#inboxMenu').hidden; };
 
 api.onState(s => { S = s; render(); });

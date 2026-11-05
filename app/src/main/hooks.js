@@ -1,7 +1,7 @@
 'use strict';
 // Hook plumbing: copies the helper scripts out of the app, writes each session's
-// --settings file (hooks + statusLine only), and runs the named-pipe server the
-// helpers report to.
+// --settings file (hooks, statusLine and the workstream's environment), and runs the
+// named-pipe server the helpers report to.
 const fs = require('fs');
 const net = require('net');
 const path = require('path');
@@ -20,8 +20,10 @@ function installHelpers() {
 const q = s => `"${s.replace(/\\/g, '/')}"`;
 
 // slot = polycli's own session id. It ties hook events to the session record before
-// the Claude session id is known.
-function writeSettings(slot) {
+// the Claude session id is known. `env` is the workstream's environment: Claude applies
+// a settings `env` block to the session (variables of the launching process don't
+// reach a background session), and re-reads the file on respawn and on reopen.
+function writeSettings(slot, env = {}) {
   const hook = path.join(paths.bin, 'hook.mjs');
   const status = path.join(paths.bin, 'status.mjs');
   const hooks = {};
@@ -31,6 +33,7 @@ function writeSettings(slot) {
     hooks[ev] = [entry];
   }
   const settings = { hooks, statusLine: { type: 'command', command: `node ${q(status)} ${slot} ${paths.pipeName}` } };
+  if (Object.keys(env).length) settings.env = env;
   const file = path.join(paths.run, `${slot}.settings.json`);
   fs.writeFileSync(file, JSON.stringify(settings, null, 2));
   return file;

@@ -15,21 +15,30 @@ const claude = require('./claude');
 const store = require('./store');
 const { writeSettings } = require('./hooks');
 const { cleanEnv } = require('./env');
+const secrets = require('./secrets');
 const { paths, checkedDir, tildify } = require('./paths');
 
 const MODELS = ['', 'opus', 'sonnet', 'haiku'];
 const EFFORTS = ['', 'low', 'medium', 'high', 'xhigh', 'max'];
 // Never offers bypassPermissions: polycli does not launch sessions that skip prompts.
 const PERMISSION_MODES = ['', 'default', 'acceptEdits', 'plan'];
+const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
+const ENV_MAX = 50;
 const DOC_EXT = /\.(md|html?|pdf|docx?|pptx?|xlsx?|csv|txt)$/i;
 const POLL_MS = 5000;
-// `claude agents --json` states seen so far: blocked (waiting for input), working,
-// stopped, done (after `claude stop`). Anything else is passed through as bgState.
-const ENDED = new Set(['stopped', 'done']);
+// `claude agents --json`: a session whose process runs has a `pid` and a `status`
+// (idle / busy). `state` is the task state shown in agent view: blocked (waiting for
+// input), working, done (the task is finished; the process may still run, e.g. after
+// a turn that completed the work), stopped. So `done` alone does not mean ended:
+// only a missing entry or a missing pid does.
+const running = e => !!e && e.pid != null;
+const waiting = e => e.status === 'idle' || e.state === 'blocked';
 
 const newId = () => crypto.randomUUID();
 const now = () => Date.now();
 const clip = (s, n) => (typeof s === 'string' ? (s.length > n ? s.slice(0, n - 1) + '…' : s) : null);
+// Terminal output as plain text: no escape sequences, whitespace collapsed.
+const screenText = s => s.replace(/\x1b\[[0-9;?<>=]*[a-zA-Z]/g, ' ').replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '').replace(/\s+/g, ' ');
 
 function cleanLabel(s, what) {
   if (typeof s !== 'string') throw new Error(`${what} is required`);
@@ -93,7 +102,7 @@ class Manager extends EventEmitter {
   }
   snapshot() {
     return {
-      workstreams: this.state.workstreams,
+      workstreams: this.state.workstreams.map(w => ({ ...w, env: (w.env || []).map(e => ({ name: e.name })), uses: w.uses || [], envRev: w.envRev || 0 })),
       sessions: this.state.sessions.map(s => ({ ...s, termLive: this.pty.isLive(`s:${s.id}`), trustLive: this.pty.isLive(`t:${s.id}`), cwdShort: tildify(s.cwd) })),
       shells: this.state.shells.map(h => ({ ...h, termLive: this.pty.isLive(`h:${h.id}`), cwdShort: tildify(h.cwd) })),
       ui: this.state.ui,
@@ -139,6 +148,55 @@ class Manager extends EventEmitter {
     w.name = cleanLabel(name, 'Name');
     this.changed();
   }
+  // Workstream settings. env: [{ name, value? }]; a missing value keeps the stored one.
+  // uses: names of global variables this workstream relies on (bookkeeping only).
+  updateWorkstream({ id, name, color, env, uses }) {
+    const w = this.ws(id);
+    if (name !== undefined) w.name = cleanLabel(name, 'Name');
+    if (color !== undefined && /^#[0-9a-f]{6}$/i.test(color)) w.color = color;
+    if (env !== undefined) {
+      if (!Array.isArray(env) || env.length > ENV_MAX) throw new Error(`At most ${ENV_MAX} variables`);
+      const old = new Map((w.env || []).map(e => [e.name.toUpperCase(), e]));
+      const seen = new Set();
+      const next = [];
+      for (const e of env) {
+        const n = String(e?.name ?? '').trim();
+        if (!ENV_NAME.test(n)) throw new Error(`"${clip(n, 40)}" is not a valid variable name`);
+        if (seen.has(n.toUpperCase())) throw new Error(`${n} is listed twice`);
+        seen.add(n.toUpperCase());
+        if (typeof e.value === 'string') {
+          if (e.value.length > 8192 || e.value.includes('\0')) throw new Error(`The value of ${n} is too long or invalid`);
+          next.push({ name: n, enc: secrets.encrypt(e.value) });
+        } else if (old.has(n.toUpperCase())) {
+          next.push({ name: n, enc: old.get(n.toUpperCase()).enc });
+        } else {
+          throw new Error(`${n} needs a value`);
+        }
+      }
+      const before = JSON.stringify(w.env || []);
+      w.env = next;
+      if (JSON.stringify(next) !== before) w.envRev = (w.envRev || 0) + 1;
+    }
+    if (uses !== undefined) {
+      if (!Array.isArray(uses)) throw new Error('uses must be a list');
+      w.uses = [...new Set(uses.map(u => String(u)).filter(u => ENV_NAME.test(u)))].slice(0, 200);
+    }
+    this.changed();
+  }
+  // The workstream's variables, decrypted, for a settings file or a shell.
+  envFor(w) {
+    const out = {};
+    for (const e of w.env || []) out[e.name] = secrets.decrypt(e.enc);
+    return out;
+  }
+  // Writes the session's settings file with the current workstream environment and
+  // records which revision the session will run with.
+  writeSessionSettings(s) {
+    const w = this.ws(s.workstreamId);
+    s.envRev = w.envRev || 0;
+    return writeSettings(s.id, this.envFor(w));
+  }
+
   setActive(id) {
     if (id) this.ws(id);
     this.state.ui.activeWorkstream = id;
@@ -168,14 +226,16 @@ class Manager extends EventEmitter {
     this.changed();
     store.event('session-new', { session: s.id, cwd: s.cwd });
     git(s.cwd, ['rev-parse', '--abbrev-ref', 'HEAD']).then(b => { s.header.branch = b; this.changed(); });
-    await this.launch(s);
+    // The launch takes a few seconds and reports into the record (failed + error), so
+    // the caller gets the session as soon as its settings are valid.
+    this.launch(s).catch(e => this.set(s, { state: 'failed', error: clip(String(e.message || e), 400) }));
     return s;
   }
 
   async launch(s) {
     if (!claude.isTrusted(s.cwd)) return this.startTrust(s);
     this.set(s, { state: 'starting', error: null });
-    const settingsFile = writeSettings(s.id);
+    const settingsFile = this.writeSessionSettings(s);
     const r = await claude.launchBg({ cwd: s.cwd, name: s.name, settingsFile, model: s.model, effort: s.effort, permissionMode: s.permissionMode });
     if (r.untrusted) return this.startTrust(s);
     if (!r.ok) return this.set(s, { state: 'failed', error: clip(r.out.trim(), 400) || 'claude --bg failed' });
@@ -199,6 +259,7 @@ class Manager extends EventEmitter {
     const id = `s:${s.id}`;
     if (!s.bgId || this.pty.isLive(id)) return;
     this.pty.spawn(id, claude.exe(), ['attach', s.bgId], { cwd: s.cwd, env: cleanEnv(), cols: s.cols || 120, rows: s.rows || 32 });
+    s.elsewhere = false;
     if (['closed', 'detached', 'failed'].includes(s.state)) this.set(s, { state: 'starting' });
     // Attaching to a session that is already running doesn't always produce a
     // statusLine, so settle "starting" from the next polls (see pollOnce).
@@ -248,6 +309,7 @@ class Manager extends EventEmitter {
       this.state.ui.activeWorkstream = s.workstreamId;
       this.state.ui.activeTab = `s:${s.id}`;
       if (!s.bgId) return this.launch(s);
+      this.writeSessionSettings(s);   // a stopped session restarts from it on attach
       this.attach(s);     // attach also restarts a stopped session
       store.event('session-reopen', { session: s.id });
     });
@@ -260,6 +322,7 @@ class Manager extends EventEmitter {
       s.open = true;
       this.set(s, { state: 'starting', attention: null, error: null });
       await this.detachTerm(`s:${s.id}`);
+      this.writeSessionSettings(s);   // respawn re-reads it: picks up environment changes
       const r = await claude.respawn(s.bgId);
       if (!r.ok) this.set(s, { error: clip(r.out.trim(), 300) });
       this.attach(s);
@@ -290,7 +353,11 @@ class Manager extends EventEmitter {
   }
   startShell(h) {
     h.state = 'running';
-    this.pty.spawn(`h:${h.id}`, h.command, h.args, { cwd: h.cwd, env: cleanEnv(), cols: h.cols || 120, rows: h.rows || 32 });
+    const w = this.state.workstreams.find(x => x.id === h.workstreamId);
+    h.envRev = w?.envRev || 0;
+    let extra = {};
+    try { if (w) extra = this.envFor(w); } catch (e) { h.envRev = -1; console.error('shell environment unavailable', e.message); }
+    this.pty.spawn(`h:${h.id}`, h.command, h.args, { cwd: h.cwd, env: cleanEnv(extra), cols: h.cols || 120, rows: h.rows || 32 });
     this.changed();
   }
   restartShell(id) {
@@ -319,7 +386,8 @@ class Manager extends EventEmitter {
     const before = s.promptSeq || 0;
     // Right after an attach the TUI drops input until it has finished drawing: wait
     // for 1 s without output (10 s at most), then check the paste shows up on screen.
-    const probe = text.trim().split('\n')[0].slice(0, 16);
+    // Claude may draw spaces as cursor moves (CSI n C), so compare without whitespace.
+    const probe = text.trim().split('\n')[0].replace(/\s+/g, '').slice(0, 16);
     for (let attempt = 0; attempt < 3; attempt++) {
       const t0 = now();
       while (now() - (this.lastOutput.get(term) || 0) < 1000 && now() - t0 < 10000) await sleep(100);
@@ -327,9 +395,10 @@ class Manager extends EventEmitter {
       this.pty.write(term, `\x1b[200~${text}\x1b[201~`);
       const t1 = now();
       let shown = false;
-      while (!shown && now() - t1 < 1500) {
+      // Claude can take ~3 s to draw a paste; pasting again too early doubles it.
+      while (!shown && now() - t1 < 6000) {
         await sleep(100);
-        shown = this.pty.scrollback(term).slice(Math.max(0, mark - 64)).replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').includes(probe);
+        shown = this.pty.scrollback(term).slice(Math.max(0, mark - 64)).replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/\s+/g, '').includes(probe);
       }
       if (shown) break;
     }
@@ -374,6 +443,13 @@ class Manager extends EventEmitter {
     }
     if (expected || this.ops.get(s.id)) return this.changed();
     if (message) s.error = clip(message, 300);
+    // `claude attach` in another terminal takes the session over and this client
+    // prints "Session opened in another window". Let it go; "Take back" reattaches.
+    if (/Session opened in another window/.test(screenText(this.pty.scrollback(termId).slice(-4000)))) {
+      this.set(s, { elsewhere: true });
+      store.event('session-elsewhere', { session: s.id });
+      return;
+    }
     // The attach client went away on its own: reattach if the session still runs.
     this.set(s, { state: 'detached' });
     this.checkAndReattach(s);
@@ -382,7 +458,7 @@ class Manager extends EventEmitter {
   async checkAndReattach(s) {
     const list = await claude.agents();
     const entry = list && list.find(a => a.id === s.bgId);
-    if (!entry || ENDED.has(entry.state)) return this.set(s, { state: 'closed', open: false });
+    if (!running(entry)) return this.set(s, { state: 'closed', open: false });
     const recent = (this.reattachLog.get(s.id) || []).filter(t => now() - t < 60000);
     if (!s.open || recent.length >= 3) return;   // stays "detached" with a Reattach button
     recent.push(now());
@@ -467,8 +543,8 @@ class Manager extends EventEmitter {
     for (const s of mine) {
       if (this.ops.get(s.id)) continue;
       const entry = list.find(a => a.id === s.bgId);
-      s.bgState = entry ? entry.state || entry.status : 'missing';
-      if (!entry || ENDED.has(entry.state)) {
+      s.bgState = entry ? [entry.status, entry.state].filter(Boolean).join(' / ') : 'missing';
+      if (!running(entry)) {
         // During a respawn or reopen Claude briefly reports the old process as done.
         // While a client is attached, or within 20 s of a lifecycle action, only three
         // such polls in a row close the session.
@@ -487,7 +563,7 @@ class Manager extends EventEmitter {
       // its screen and has been quiet for 3 s.
       if (['starting', 'detached'].includes(s.state) && this.pty.isLive(`s:${s.id}`)) {
         const quiet = now() - (this.lastOutput.get(`s:${s.id}`) || now()) > 3000;
-        if (entry.state === 'blocked' || quiet) { this.set(s, { state: 'idle' }); continue; }
+        if (waiting(entry) || quiet) { this.set(s, { state: 'idle' }); continue; }
       }
       // A turn that ended without a Stop hook (Ctrl+C, crash) would stay "busy";
       // two consecutive "blocked" polls (waiting for input) settle it as idle.
@@ -510,7 +586,7 @@ class Manager extends EventEmitter {
       // busy / needs-you survive a restart as is: after a reattach Claude reports a
       // permission prompt as "blocked" just like an idle prompt, so they can't be
       // re-derived. A stale busy settles via the busy + blocked rule in pollOnce.
-      if (s.open && s.bgId && s.state !== 'closed') {
+      if (s.open && s.bgId && s.state !== 'closed' && !s.elsewhere) {
         if (!['busy', 'needs-you'].includes(s.state)) s.state = 'detached';
         this.attach(s);
       }

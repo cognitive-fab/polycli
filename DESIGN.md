@@ -70,11 +70,13 @@ Claude Code already supplies every primitive needed:
 Closing or crashing polycli never ends a CLI session, because they are `--bg`. On the next start, polycli reattaches every session that was open, in its old layout slot.
 
 **Status (Phase 1 findings).** `claude agents --json` takes 1–2 s per call, and its `state` is coarse.
-- Observed values: `blocked` (waiting for input, including a fresh idle session), `working`, `stopped`, and `done` (after `claude stop`).
+- `state` is the task state shown in agent view. Observed values: `blocked` (waiting for input, including a fresh idle session), `working`, `stopped`, and `done`.
+- `done` means the task is finished, **not** that the process ended: a live session reads `done` after a turn that completed its work, and a stopped one reads `done` too. (Treating `done` as ended closed a live session in real use.)
+- A session whose process runs has a `pid` and a `status` (`idle` / `busy`); an ended one has neither.
 - `blocked` does **not** mean needs-you.
 
 So the two sources split the work:
-- **`agents --json`, polled every 5 s, decides whether a session exists.** Missing, `stopped` or `done` means `closed`.
+- **`agents --json`, polled every 5 s, decides whether a session exists.** Missing, or no `pid`, means `closed`.
 - **Hooks decide the turn state:**
   - `UserPromptSubmit` → `busy`;
   - `Stop` → `idle`;
@@ -84,6 +86,7 @@ So the two sources split the work:
   - After an attach, `blocked`, or an attach client quiet for 3 s, settles `starting` or `detached` as `idle`, because a reattach doesn't always produce a statusLine.
   - On polycli restart, a saved `busy` or `needs-you` is kept, because after a reattach a permission prompt also reads `blocked`.
 - **Error states:** a launch error gives `failed`, with a Try again button. An attach client that exits on its own gives `detached`, with an automatic reattach of at most 3 per minute while the session still exists.
+- **Attached elsewhere:** a session takes one attach client at a time; `claude attach <id>` in another terminal takes it over, and polycli's client exits after printing "Session opened in another window". polycli then marks the session `elsewhere`, does not reattach (also not on restart), and offers **Take back**. Hooks keep reporting turn state meanwhile. The pane header shows the id; clicking it copies `claude attach <id>`.
 
 ## 5. Session header and live info
 
@@ -136,6 +139,23 @@ Every hook runs `node polycli-hook.mjs <event>`, which connects to the pipe with
   - Shift-click opens the git root instead. Ctrl-click opens a new window (`-n`). The default is `-r`, which reuses the window already showing that folder.
 - Artifact and document rows (§8) open with `code -g <file>` for text and code files, and with the default app (`shell.openPath`) for pdf, docx, png and similar.
 - There is also a workstream-level "Open all folders" action, which opens a multi-root workspace (`.code-workspace` generated under `%APPDATA%\polycli\workspaces\`).
+
+## 6a. Environment variables and keys
+
+**Findings (2026-11-05).**
+- A background session takes its environment from Claude's background process, not from the process that runs `claude --bg`. A variable set only in polycli's environment did not reach the session.
+- Windows user variables (`HKCU\Environment`) do reach it: `POLYWORLD_API_KEY`, `FRED_API_KEY` and the others were all present.
+- A settings file's `env` block reaches the session. Claude re-reads the settings file on `claude respawn` and when a stopped session is reopened, so a changed value is applied by Restart or Reopen.
+- Only `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `apiKeyHelper` and similar change how Claude itself signs in and bills. Names like `POLYWATCH_ANTHROPIC_API_KEY` mean nothing to Claude.
+
+**Per-workstream variables.** Workstream ⚙ Settings holds name/value pairs.
+- Values are encrypted with Electron `safeStorage` (DPAPI, current Windows user) in `state.json` and are never sent to the renderer; the dialog shows names only.
+- When a session launches, restarts or reopens, polycli writes them into the session's `--settings` file (`env` block) under `%APPDATA%\polycli\run`. Claude has to read them from there, so that file holds them in plain text, readable by the same Windows user, like the registry's user variables.
+- New shells in the workstream get them on top of polycli's environment.
+- Each change bumps the workstream's `envRev`. A session or shell started with an older revision shows "environment changed, Restart to apply".
+- Names starting with `ANTHROPIC_` or `CLAUDE_CODE_USE_` get a warning that they change Claude's own sign-in and billing.
+
+**Global keys.** The Keys button lists the key-like variables saved in Windows (user and machine; names only, matched on KEY, TOKEN, SECRET, PASSWORD, CREDENTIAL, ENDPOINT). Each workstream records which of them it uses (`uses`, bookkeeping only), and the Keys view shows, per key, the workstreams that use it and the ones that set their own value.
 
 ## 7. Cowork ↔ CLI bridge
 
