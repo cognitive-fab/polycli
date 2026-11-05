@@ -1,6 +1,6 @@
 'use strict';
 const path = require('path');
-const { app, BrowserWindow, ipcMain, dialog, Notification, Menu, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Notification, Menu, clipboard, shell } = require('electron');
 const { paths, ensureDirs } = require('./paths');
 const { installHelpers, HookServer } = require('./hooks');
 const { PtyClient } = require('./ptyclient');
@@ -61,6 +61,13 @@ const OPS = {
   renameWorkstream: a => manager.renameWorkstream(a),
   updateWorkstream: a => manager.updateWorkstream(a),
   globalKeys: () => require('./env').globalKeys(),
+  gitFiles: a => manager.gitFiles(a.id),
+  commitSession: a => manager.commitSession({ id: a.id, message: a.message, all: a.all }),
+  pushSession: a => manager.pushSession({ id: a.id }),
+  deploySession: a => manager.deploySession({ id: a.id }),
+  refreshGit: a => manager.refreshGit((s => s.liveCwd || s.cwd)(manager.session(a.id)), { pr: true }),
+  askClaudeCommit: a => manager.submitPrompt(a.id, 'Commit the current changes in this repository with a clear, conventional commit message. Do not push.'),
+  openGithub: a => { const u = require('./git').safeGithubUrl(a.url); if (!u) throw new Error('Only github.com links can be opened'); return shell.openExternal(u); },
   setActive: a => manager.setActive(a.id),
   setUi: a => manager.setUi(a),
   newSession: a => manager.newSession(a).then(s => s.id),

@@ -48,7 +48,32 @@ function tabsOf(wid) {
 }
 
 // ---------------- render ----------------
+// ---------------- theme ----------------
+// System / Light / Dark, saved in ui.theme. Terminals switch with the app.
+const XTERM_THEMES = {
+  dark: { background: '#101217', foreground: '#e4e7ee', cursor: '#7c8cf8', cursorAccent: '#101217', selectionBackground: '#7c8cf855' },
+  light: {
+    background: '#fbfbfd', foreground: '#1d2330', cursor: '#4f5fd6', cursorAccent: '#fbfbfd', selectionBackground: '#4f5fd640',
+    black: '#1d2330', red: '#c4322f', green: '#23803f', yellow: '#8a6100', blue: '#2f62c8', magenta: '#9b38ad', cyan: '#127f8a', white: '#6b7383',
+    brightBlack: '#4f5868', brightRed: '#d9443f', brightGreen: '#2e9450', brightYellow: '#a07200', brightBlue: '#3d74e0', brightMagenta: '#b04cc4', brightCyan: '#1a929e', brightWhite: '#3a4150',
+  },
+};
+const systemDark = window.matchMedia('(prefers-color-scheme: dark)');
+let currentTheme = 'dark';
+const THEME_LABEL = { system: '◐ System', light: '☀ Light', dark: '☾ Dark' };
+function applyTheme() {
+  const pref = S.ui.theme || 'system';
+  const resolved = pref === 'system' ? (systemDark.matches ? 'dark' : 'light') : pref;
+  $('#themeBtn').textContent = THEME_LABEL[pref];
+  if (resolved === currentTheme && document.documentElement.dataset.theme === resolved) return;
+  currentTheme = resolved;
+  document.documentElement.dataset.theme = resolved;
+  for (const t of terms.values()) t.term.options.theme = XTERM_THEMES[resolved];
+}
+systemDark.addEventListener('change', () => applyTheme());
+
 function render() {
+  applyTheme();
   const ws = activeWs();
   $('#topTitle').textContent = ws ? `${ws.name} · ${ws.folder}` : '';
   renderInbox();
@@ -116,6 +141,35 @@ function currentTab(tabs) {
   return tabs.some(t => t.id === sel) ? sel : tabs[0]?.id || null;
 }
 
+// Git line: branch, sync with upstream, local changes, GitHub repo and PR, and the
+// Commit / Push / Deploy actions. Commit and Push wait while Claude is working.
+function gitLine(s) {
+  const g = s.git;
+  if (!g) return '';
+  const working = ['busy', 'needs-you'].includes(s.state);
+  const wait = working ? ' disabled title="Claude is working in this session; wait until it is idle"' : '';
+  const n = g.changed + g.untracked;
+  const parts = [`<span class="branch">⎇ ${g.detached ? 'detached HEAD' : esc(g.branch)}</span>`];
+  if (g.detached) { /* no upstream to compare with */ }
+  else if (!g.upstream) parts.push('<span class="ab">not published</span>');
+  else if (g.ahead || g.behind) parts.push(`<span class="ab" title="${g.ahead} to push, ${g.behind} to pull (${esc(g.upstream)})">↑${g.ahead} ↓${g.behind}</span>`);
+  else parts.push(`<span class="ab ok" title="In sync with ${esc(g.upstream)}">synced</span>`);
+  parts.push(n ? `<span class="chg">● ${n} changed</span>` : '<span class="ab">clean</span>');
+  if (g.conflicts) parts.push(`<span class="bad">${g.conflicts} conflict${g.conflicts === 1 ? '' : 's'}</span>`);
+  if (g.repo) parts.push(`<button class="link" data-act="gh-repo" title="Open on GitHub">${esc(g.repo)}</button>`);
+  if (g.pr) {
+    const c = g.pr.checks;
+    const checks = c.fail ? ` <span class="bad">✗ ${c.fail}</span>` : c.pending ? ` <span class="pending">● ${c.pending}</span>` : c.pass ? ` <span class="ok">✓ ${c.pass}</span>` : '';
+    parts.push(`<button class="link" data-act="gh-pr" title="${esc(g.pr.title)}">PR #${esc(g.pr.number)} ${esc(String(g.pr.state).toLowerCase())}</button>${checks}`);
+  }
+  const acts = [];
+  if (n) acts.push(`<button class="chip" data-act="git-commit"${wait}>Commit</button>`);
+  if (g.branch && (!g.upstream || g.ahead)) acts.push(`<button class="chip" data-act="git-push"${wait}>${g.upstream ? 'Push' : 'Publish'}</button>`);
+  if (s.deploy) acts.push(`<button class="chip" data-act="deploy" title="${esc(s.deploy.command)}">Deploy</button>`);
+  acts.push('<button class="chip icon" data-act="git-refresh" title="Refresh git and pull request info">↻</button>');
+  return `<div class="l4">${parts.join('<span class="sep">·</span>')}<span class="git-acts">${acts.join('')}</span></div>`;
+}
+
 function headerLines(s) {
   const h = s.header || {};
   const version = h.version ? `Claude Code v${esc(h.version)}` : 'Claude Code';
@@ -125,7 +179,8 @@ function headerLines(s) {
   return `<div class="banner-lines">
     <div class="l1">${version}</div>
     <div class="l2">${esc(model)}${effort}${plan}</div>
-    <div class="l3"><button class="cwd" data-act="code" title="Open in VS Code (Shift: git root, Ctrl: new window)${s.liveCwd ? `&#10;Started in ${esc(s.startedShort)}` : ''}">${esc(s.cwdShort)}</button>${s.worktree ? `<span class="wt" title="The session moved into this git worktree; started in ${esc(s.startedShort)}">worktree</span>` : ''}${h.branch ? `<span class="branch">⎇ ${esc(h.branch)}</span>` : ''}${s.bgId ? `<button class="sid" data-act="copy-id" title="Copy &quot;claude attach ${esc(s.bgId)}&quot; to continue in any terminal. That terminal takes the session over; Take back returns it here.">⧉ ${esc(s.bgId)}</button>` : ''}</div>
+    <div class="l3"><button class="cwd" data-act="code" title="Open in VS Code (Shift: git root, Ctrl: new window)${s.liveCwd ? `&#10;Started in ${esc(s.startedShort)}` : ''}">${esc(s.cwdShort)}</button>${s.worktree ? `<span class="wt" title="The session moved into this git worktree; started in ${esc(s.startedShort)}">worktree</span>` : ''}${!s.git && h.branch ? `<span class="branch">⎇ ${esc(h.branch)}</span>` : ''}${s.bgId ? `<button class="sid" data-act="copy-id" title="Copy &quot;claude attach ${esc(s.bgId)}&quot; to continue in any terminal. That terminal takes the session over; Take back returns it here.">⧉ ${esc(s.bgId)}</button>` : ''}</div>
+    ${gitLine(s)}
   </div>`;
 }
 
@@ -228,7 +283,7 @@ function mountTerm(host, termId) {
   const term = new Terminal({
     fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, monospace', fontSize: 13, cursorBlink: true,
     scrollback: 5000, allowProposedApi: true,
-    theme: { background: '#101217', foreground: '#e4e7ee', cursor: '#7c8cf8', selectionBackground: '#7c8cf855' },
+    theme: XTERM_THEMES[currentTheme],
   });
   const fit = new FitAddon();
   term.loadAddon(fit);
@@ -409,6 +464,7 @@ async function wsSettingsDialog(ws) {
       <div class="hint" id="envWarn"></div>
       <div class="hint">Every Claude session and new shell in this workstream gets them, on top of your Windows variables (a workstream value wins). Values are stored encrypted for your Windows account and are not shown again. When a session starts they are written into its settings file under %APPDATA%\\polycli\\run, which Claude reads. Running sessions pick up changes on Restart.</div>
     </div>
+    <label class="field"><span>Deploy command (runs in a new shell tab from the Deploy button; leave empty to use a package.json "deploy" script if there is one)</span><input name="deploy" value="${esc(ws.deploy || '')}" placeholder="npm run deploy" spellcheck="false" style="font-family:var(--mono)"></label>
     <div class="field"><span>Global keys this workstream uses (for your own tracking; every session already has them)</span>
       <div class="key-checks">${globals.length ? globals.map(g => `<label class="key-check"><input type="checkbox" name="uses" value="${esc(g.name)}" ${uses.has(g.name) ? 'checked' : ''}><code>${esc(g.name)}</code>${g.scope === 'machine' ? '<small>machine</small>' : ''}</label>`).join('') : '<span class="hint">No key-like Windows variables found.</span>'}</div>
     </div>
@@ -419,7 +475,7 @@ async function wsSettingsDialog(ws) {
       const value = r.querySelector('.env-value').value;
       return r.dataset.existing && !value ? { name } : { name, value };
     }).filter(e => e.name || e.value);
-    await api.call('updateWorkstream', { id: ws.id, name: fd.get('name'), color, env, uses: fd.getAll('uses') });
+    await api.call('updateWorkstream', { id: ws.id, name: fd.get('name'), color, env, uses: fd.getAll('uses'), deploy: fd.get('deploy') });
     toast('Workstream saved');
   }, { wide: true });
   const rows = form.querySelector('#envRows');
@@ -453,6 +509,47 @@ async function keysDialog() {
     ${local.length ? `<h3 style="margin-top:16px">Workstream-only variables</h3><table class="keys-table"><tbody>${local.map(x => `<tr><td><code>${esc(x.name)}</code></td><td>${chips([x.w])}</td></tr>`).join('')}</tbody></table>` : ''}
     <div class="modal-actions"><button type="button" class="btn" data-cancel hidden></button><button class="btn primary">Close</button></div>`,
   async () => {}, { wide: true });
+  form.querySelector('.btn.primary').focus();
+}
+
+async function commitDialog(s) {
+  const st = await call('gitFiles', { id: s.id });
+  const canAsk = s.termLive && s.state === 'idle';
+  const form = modal(`<h3>Commit in ${esc(st.rootShort || s.cwdShort)}</h3>
+    <div class="file-list">${st.files.map(f => `<div><code class="x">${esc(f.x)}</code> ${esc(f.path)}</div>`).join('') || '<div class="hint">No changes.</div>'}</div>
+    <label class="key-check" style="margin:8px 0 10px"><input type="checkbox" name="all" checked> Stage all changes (git add -A)</label>
+    <label class="field"><span>Message</span><textarea name="message" rows="4" placeholder="What changed and why"></textarea></label>
+    <div class="modal-actions">${canAsk ? '<button type="button" class="btn" data-ask style="margin-right:auto" title="Claude writes the message and commits">Ask Claude to commit</button>' : ''}<button type="button" class="btn" data-cancel>Cancel</button><button class="btn primary">Commit</button></div>`,
+  async fd => {
+    const out = await api.call('commitSession', { id: s.id, message: fd.get('message'), all: fd.get('all') === 'on' });
+    toast(out.split('\n')[0] || 'Committed');
+  }, { wide: true });
+  const ask = form.querySelector('[data-ask]');
+  if (ask) ask.onclick = async () => { $('#modalBack').hidden = true; form.onsubmit = null; await call('askClaudeCommit', { id: s.id }); toast('Asked Claude to commit'); };
+}
+
+function pushDialog(s) {
+  const g = s.git;
+  const what = g.upstream
+    ? `Push ${g.ahead} commit${g.ahead === 1 ? '' : 's'} from <code>${esc(g.branch)}</code> to <code>${esc(g.upstream)}</code>?`
+    : `Publish <code>${esc(g.branch)}</code> to <code>origin</code> (git push -u origin HEAD)?`;
+  const behind = g.behind ? `<p class="warn-text">The remote has ${g.behind} commit${g.behind === 1 ? '' : 's'} you don't have, so the push will be rejected. Pull first.</p>` : '';
+  const form = modal(`<h3>${g.upstream ? 'Push' : 'Publish branch'}</h3><p>${what}</p>${behind}
+    <div class="modal-actions"><button type="button" class="btn" data-cancel>Cancel</button><button class="btn primary">${g.upstream ? 'Push' : 'Publish'}</button></div>`,
+  async () => {
+    const out = await api.call('pushSession', { id: s.id });
+    toast(out.split('\n').filter(Boolean).pop() || 'Pushed');
+  });
+  form.querySelector('.btn.primary').focus();
+}
+
+function deployDialog(s) {
+  const d = s.deploy;
+  const form = modal(`<h3>Deploy</h3>
+    <p>Run <code>${esc(d.command)}</code> in <code>${esc(d.cwdShort)}</code>?</p>
+    <p class="hint">${d.detected ? 'Found as the "deploy" script in package.json. ' : ''}It runs in a new shell tab of this workstream, with its environment variables. Set or change the command in the workstream's ⚙ Settings.</p>
+    <div class="modal-actions"><button type="button" class="btn" data-cancel>Cancel</button><button class="btn primary">Run</button></div>`,
+  async () => { await api.call('deploySession', { id: s.id }); });
   form.querySelector('.btn.primary').focus();
 }
 
@@ -503,6 +600,13 @@ document.addEventListener('click', async e => {
   if (act === 'restart-shell' && hid) return call('restartShell', { id: hid });
   if (act === 'close' && sid) return call('closeSession', { id: sid });
   if (act === 'reopen' && sid) return call('reopenSession', { id: sid });
+  const ses = sid && S.sessions.find(x => x.id === sid);
+  if (act === 'git-commit' && ses) return commitDialog(ses);
+  if (act === 'git-push' && ses?.git) return pushDialog(ses);
+  if (act === 'deploy' && ses?.deploy) return deployDialog(ses);
+  if (act === 'git-refresh' && ses) return call('refreshGit', { id: sid }).then(() => toast('Git info refreshed'));
+  if (act === 'gh-repo' && ses?.git?.repo) return call('openGithub', { url: `https://github.com/${ses.git.repo}` });
+  if (act === 'gh-pr' && ses?.git?.pr) return call('openGithub', { url: ses.git.pr.url });
   if (act === 'copy-id' && sid) { const s = S.sessions.find(x => x.id === sid); if (s?.bgId) copyText(`claude attach ${s.bgId}`, `Copied: claude attach ${s.bgId}`); return; }
   if ((act === 'restart' || act === 'retrust') && sid) return call('restartSession', { id: sid });
   if (act === 'delete' && sid) {
@@ -515,6 +619,13 @@ document.addEventListener('click', async e => {
 });
 
 $('#addWs').onclick = newWorkstreamDialog;
+$('#themeBtn').onclick = () => {
+  const order = ['system', 'light', 'dark'];
+  const next = order[(order.indexOf(S.ui.theme || 'system') + 1) % order.length];
+  S.ui.theme = next;
+  applyTheme();
+  call('setUi', { theme: next });
+};
 $('#keysBtn').onclick = () => keysDialog();
 $('#inboxBtn').onclick = e => { e.stopPropagation(); $('#inboxMenu').hidden = !$('#inboxMenu').hidden; };
 

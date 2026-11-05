@@ -16,6 +16,7 @@ const store = require('./store');
 const { writeSettings } = require('./hooks');
 const { cleanEnv } = require('./env');
 const secrets = require('./secrets');
+const gitinfo = require('./git');
 const { paths, checkedDir, tildify } = require('./paths');
 
 const MODELS = ['', 'opus', 'sonnet', 'haiku'];
@@ -26,6 +27,9 @@ const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const ENV_MAX = 50;
 const DOC_EXT = /\.(md|html?|pdf|docx?|pptx?|xlsx?|csv|txt)$/i;
 const POLL_MS = 5000;
+const GIT_STALE_MS = 20000;   // background refresh of the git line for open sessions
+const PR_STALE_MS = 60000;    // gh pr view is slower; refreshed less often
+const dirKey = d => path.resolve(d).toLowerCase();
 // `claude agents --json`: a session whose process runs has a `pid` and a `status`
 // (idle / busy). `state` is the task state shown in agent view: blocked (waiting for
 // input), working, done (the task is finished; the process may still run, e.g. after
@@ -89,6 +93,8 @@ class Manager extends EventEmitter {
     this.endedPolls = new Map();      // session id → consecutive stopped/done/missing polls
     this.ops = new Map();             // session id → in-flight lifecycle operation
     this.lastOutput = new Map();      // terminal id → time of last output
+    this.gitByDir = new Map();        // folder → { info, repo, pr, deploy, at, prAt, busy }; not saved
+    this.gitTimers = new Map();       // folder → debounce timer
     pty.on('data', id => this.lastOutput.set(id, now()));
     pty.on('exit', (id, code) => this.onTermExit(id, code));
     pty.on('error', (id, message) => this.onTermExit(id, -1, message));
@@ -105,7 +111,11 @@ class Manager extends EventEmitter {
       workstreams: this.state.workstreams.map(w => ({ ...w, env: (w.env || []).map(e => ({ name: e.name })), uses: w.uses || [], envRev: w.envRev || 0 })),
       sessions: this.state.sessions.map(s => {
         const here = s.liveCwd || s.cwd;
-        return { ...s, termLive: this.pty.isLive(`s:${s.id}`), trustLive: this.pty.isLive(`t:${s.id}`), cwdShort: tildify(here), startedShort: tildify(s.cwd),
+        const g = this.gitByDir.get(dirKey(here));
+        const w = this.state.workstreams.find(x => x.id === s.workstreamId);
+        const git = g && g.info ? { ...g.info, files: undefined, repo: g.repo, pr: g.pr } : null;
+        const deploy = w?.deploy ? { command: w.deploy, cwdShort: tildify(here) } : g?.deploy ? { command: g.deploy.command, cwdShort: tildify(g.deploy.cwd), detected: true } : null;
+        return { ...s, git, deploy, termLive: this.pty.isLive(`s:${s.id}`), trustLive: this.pty.isLive(`t:${s.id}`), cwdShort: tildify(here), startedShort: tildify(s.cwd),
           worktree: (/[\\/]\.claude[\\/]worktrees[\\/]([^\\/]+)/.exec(here) || [])[1] || null };
       }),
       shells: this.state.shells.map(h => ({ ...h, termLive: this.pty.isLive(`h:${h.id}`), cwdShort: tildify(h.cwd) })),
@@ -154,8 +164,13 @@ class Manager extends EventEmitter {
   }
   // Workstream settings. env: [{ name, value? }]; a missing value keeps the stored one.
   // uses: names of global variables this workstream relies on (bookkeeping only).
-  updateWorkstream({ id, name, color, env, uses }) {
+  updateWorkstream({ id, name, color, env, uses, deploy }) {
     const w = this.ws(id);
+    if (deploy !== undefined) {
+      const d = String(deploy ?? '').trim();
+      if (d.length > 500 || /[\r\n\0]/.test(d)) throw new Error('The deploy command must be one line');
+      w.deploy = d || null;
+    }
     if (name !== undefined) w.name = cleanLabel(name, 'Name');
     if (color !== undefined && /^#[0-9a-f]{6}$/i.test(color)) w.color = color;
     if (env !== undefined) {
@@ -208,6 +223,7 @@ class Manager extends EventEmitter {
   }
   setUi(patch) {
     for (const k of ['activeTab', 'collapsed']) if (k in patch) this.state.ui[k] = patch[k];
+    if ('theme' in patch && ['system', 'light', 'dark'].includes(patch.theme)) this.state.ui.theme = patch.theme;
     this.changed();
   }
 
@@ -347,21 +363,24 @@ class Manager extends EventEmitter {
   }
 
   // ---------- shells ----------
-  newShell({ workstreamId, cwd }) {
+  // `run` is a command for this first start only (Deploy). The stored args stay a plain
+  // shell, so restarting polycli never runs it again.
+  newShell({ workstreamId, cwd, run, name }) {
     const w = this.ws(workstreamId);
-    const h = { id: newId(), workstreamId: w.id, name: 'pwsh', cwd: checkedDir(cwd || w.folder), command: 'pwsh.exe', args: ['-NoLogo'], open: true, state: 'running', createdAt: now() };
+    const h = { id: newId(), workstreamId: w.id, name: name || 'pwsh', cwd: checkedDir(cwd || w.folder), command: 'pwsh.exe', args: ['-NoLogo'], open: true, state: 'running', createdAt: now() };
     this.state.shells.push(h);
     this.state.ui.activeTab = `h:${h.id}`;
-    this.startShell(h);
+    this.startShell(h, run);
     return h;
   }
-  startShell(h) {
+  startShell(h, run) {
     h.state = 'running';
     const w = this.state.workstreams.find(x => x.id === h.workstreamId);
     h.envRev = w?.envRev || 0;
     let extra = {};
     try { if (w) extra = this.envFor(w); } catch (e) { h.envRev = -1; console.error('shell environment unavailable', e.message); }
-    this.pty.spawn(`h:${h.id}`, h.command, h.args, { cwd: h.cwd, env: cleanEnv(extra), cols: h.cols || 120, rows: h.rows || 32 });
+    const args = run ? [...h.args, '-NoExit', '-Command', run] : h.args;
+    this.pty.spawn(`h:${h.id}`, h.command, args, { cwd: h.cwd, env: cleanEnv(extra), cols: h.cols || 120, rows: h.rows || 32 });
     this.changed();
   }
   restartShell(id) {
@@ -461,8 +480,11 @@ class Manager extends EventEmitter {
 
   async checkAndReattach(s) {
     const list = await claude.agents();
+    // A failed `claude agents` call (null) says nothing about the session: only close
+    // it when the list came back without it. Otherwise try to reattach; if the session
+    // really ended, the next polls close it.
     const entry = list && list.find(a => a.id === s.bgId);
-    if (!running(entry)) return this.set(s, { state: 'closed', open: false });
+    if (list && !running(entry)) return this.set(s, { state: 'closed', open: false });
     const recent = (this.reattachLog.get(s.id) || []).filter(t => now() - t < 60000);
     if (!s.open || recent.length >= 3) return;   // stays "detached" with a Reattach button
     recent.push(now());
@@ -483,7 +505,7 @@ class Manager extends EventEmitter {
           version: input.version || s.header.version,
           model: input.model?.display_name || s.header.model,
         });
-        if (s.state === 'starting' || s.state === 'detached') s.state = 'idle';
+        if (s.state === 'starting' || s.state === 'detached') return this.set(s, { state: 'idle' });
         return this.changed();
       case 'SessionStart':
         if (!['busy', 'needs-you'].includes(s.state)) this.set(s, { state: 'idle' });
@@ -493,6 +515,7 @@ class Manager extends EventEmitter {
         s.promptSeq = (s.promptSeq || 0) + 1;
         return this.set(s, { state: 'busy', attention: null, lastPrompt: clip(input.prompt, 300) });
       case 'Stop':
+        this.gitSoon(s);
         this.readTranscriptHeader(s);
         return this.set(s, { state: 'idle', attention: null, lastMessage: clip(input.last_assistant_message, 600) });
       case 'Notification': {
@@ -505,6 +528,7 @@ class Manager extends EventEmitter {
         this.pollSoon();
         return;
       case 'PostToolUse': {
+        this.gitSoon(s);
         const f = input.tool_input?.file_path;
         if (f && DOC_EXT.test(f) && !s.documents.some(d => d.path === f)) {
           s.documents.unshift({ path: f, tool: input.tool_name, at: now() });
@@ -526,9 +550,86 @@ class Manager extends EventEmitter {
     if (next === (s.liveCwd || null) || (next && s.liveCwd && same(next, s.liveCwd))) return;
     if (next && !fs.existsSync(next)) return;
     s.liveCwd = next;
+    this.gitSoon(s, 0);
     store.event('session-cwd', { session: s.id, cwd: next || s.cwd });
     git(next || s.cwd, ['rev-parse', '--abbrev-ref', 'HEAD']).then(b => { s.header.branch = b; this.changed(); });
     this.changed();
+  }
+
+  // ---------- git ----------
+  gitSoon(s, ms = 1500) {
+    const dir = s.liveCwd || s.cwd;
+    const k = dirKey(dir);
+    clearTimeout(this.gitTimers.get(k));
+    this.gitTimers.set(k, setTimeout(() => { this.gitTimers.delete(k); this.refreshGit(dir); }, ms));
+  }
+  // One refresh per folder at a time; sessions sharing a folder share the result.
+  async refreshGit(dir, { pr = false } = {}) {
+    if (this.disposed) return;
+    const k = dirKey(dir);
+    const g = this.gitByDir.get(k) || { at: 0, prAt: 0 };
+    if (g.busy) return;
+    g.busy = true;
+    this.gitByDir.set(k, g);
+    try {
+      const before = JSON.stringify([g.info, g.repo, g.pr, g.deploy]);
+      g.info = await gitinfo.status(dir);
+      if (g.info) {
+        if (g.repo === undefined || now() - g.at > 5 * 60000) {
+          g.repo = (await gitinfo.github(dir)).repo || null;
+          g.deploy = await gitinfo.detectDeploy(dir);
+        }
+        if (g.repo && g.info.branch && (pr || now() - g.prAt > PR_STALE_MS)) {
+          g.pr = await gitinfo.pullRequest(dir);
+          g.prAt = now();
+        }
+      } else {
+        g.repo = null; g.pr = null; g.deploy = null;
+      }
+      g.at = now();
+      if (JSON.stringify([g.info, g.repo, g.pr, g.deploy]) !== before) this.changed();
+    } finally {
+      g.busy = false;
+    }
+  }
+  // Commit and Push act on the folder the session is in. Not while Claude is working
+  // or waiting on a prompt: files may be half edited.
+  gitTarget(id) {
+    const s = this.session(id);
+    if (['busy', 'needs-you'].includes(s.state)) throw new Error('Claude is working in this session; wait until it is idle.');
+    return { s, dir: s.liveCwd || s.cwd };
+  }
+  async gitFiles(id) {
+    const s = this.session(id);
+    const st = await gitinfo.status(s.liveCwd || s.cwd);
+    if (!st) throw new Error('Not a git repository');
+    const root = await gitinfo.topLevel(s.liveCwd || s.cwd);
+    return { ...st, rootShort: root ? tildify(root) : null };
+  }
+  async commitSession({ id, message, all = true }) {
+    const { s, dir } = this.gitTarget(id);
+    const out = await gitinfo.commit(dir, message, { all: !!all });
+    store.event('git-commit', { session: s.id, dir });
+    await this.refreshGit(dir, { pr: true });
+    return out;
+  }
+  async pushSession({ id }) {
+    const { s, dir } = this.gitTarget(id);
+    const out = await gitinfo.push(dir);
+    store.event('git-push', { session: s.id, dir });
+    await this.refreshGit(dir, { pr: true });
+    return out;
+  }
+  // Runs the deploy command in a new shell tab of the workstream, visible to the user.
+  deploySession({ id }) {
+    const s = this.session(id);
+    const w = this.ws(s.workstreamId);
+    const here = s.liveCwd || s.cwd;
+    const g = this.gitByDir.get(dirKey(here));
+    const target = w.deploy ? { command: w.deploy, cwd: here } : g?.deploy ? { command: g.deploy.command, cwd: g.deploy.cwd } : null;
+    if (!target) throw new Error('No deploy command: set one in the workstream settings');
+    store.event('deploy', { session: s.id, command: target.command, cwd: target.cwd });
+    return this.newShell({ workstreamId: w.id, cwd: target.cwd, run: target.command, name: 'deploy' }).id;
   }
 
   readTranscriptHeader(s) {
@@ -579,6 +680,10 @@ class Manager extends EventEmitter {
       }
       this.endedPolls.delete(s.id);
       if (entry.cwd) this.followCwd(s, entry.cwd);
+      if (s.open) {
+        const g = this.gitByDir.get(dirKey(s.liveCwd || s.cwd));
+        if (!g || now() - g.at > GIT_STALE_MS) this.refreshGit(s.liveCwd || s.cwd);
+      }
       // Attached and ready: Claude says it waits for input, or the attach client drew
       // its screen and has been quiet for 3 s.
       if (['starting', 'detached'].includes(s.state) && this.pty.isLive(`s:${s.id}`)) {
@@ -617,6 +722,7 @@ class Manager extends EventEmitter {
 
   dispose() {
     this.disposed = true;
+    for (const t of this.gitTimers.values()) clearTimeout(t);
     clearTimeout(this.pollTimer);
     store.flush();
   }

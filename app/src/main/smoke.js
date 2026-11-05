@@ -233,8 +233,52 @@ async function runUi({ app, win, manager }) {
   app.exit(report.ok ? 0 : 1);
 }
 
+// Git line and themes on a real session, read-only: the smoke folder sits inside the
+// polycli repo, so this mode never clicks Commit or Push (it only opens and cancels
+// the Commit dialog).
+async function runGit({ app, win, manager }) {
+  const report = { phase: 'git', shots: [] };
+  const wc = win.webContents;
+  const shot = async name => {
+    await sleep(900);
+    try { fs.writeFileSync(path.join(OUT, `git-${name}.png`), (await wc.capturePage()).toPNG()); report.shots.push(name); }
+    catch (e) { report.shots.push(`${name}: not captured (${e.message || e})`); }
+  };
+  let sid = null;
+  try {
+    const ws = manager.createWorkstream({ name: 'git-test', folder: FOLDER });
+    const s = await manager.newSession({ workstreamId: ws.id, role: 'main', model: 'haiku' });
+    sid = s.id;
+    await waitFor(() => manager.session(sid).state === 'idle' && manager.pty.isLive(`s:${sid}`), 60000, 'idle');
+    await manager.refreshGit(FOLDER, { pr: true });
+    await waitFor(() => manager.snapshot().sessions.find(x => x.id === sid).git, 15000, 'git line');
+    report.git = manager.snapshot().sessions.find(x => x.id === sid).git;
+    await sleep(1500);
+    report.gitLine = await wc.executeJavaScript(`document.querySelector('[data-session="${sid}"] .l4')?.innerText || null`);
+    await shot('dark');
+    await wc.executeJavaScript(`document.querySelector('[data-session="${sid}"] [data-act="git-commit"]')?.click()`);
+    await sleep(1500);
+    report.commitDialogFiles = await wc.executeJavaScript(`document.querySelectorAll('.file-list > div').length`);
+    await shot('commit-dialog');
+    await wc.executeJavaScript(`document.querySelector('[data-cancel]')?.click()`);
+    manager.setUi({ theme: 'light' });
+    await sleep(1200);
+    report.themeLight = await wc.executeJavaScript(`document.documentElement.dataset.theme`);
+    await shot('light');
+    manager.setUi({ theme: 'system' });
+    report.ok = !!report.gitLine && report.themeLight === 'light' && report.commitDialogFiles >= 0;
+  } catch (e) {
+    report.ok = false;
+    report.error = String(e.stack || e);
+  }
+  if (sid) { try { await manager.deleteSession(sid); } catch {} }
+  fs.writeFileSync(path.join(OUT, 'git.json'), JSON.stringify(report, null, 2));
+  app.exit(report.ok ? 0 : 1);
+}
+
 async function run(ctx) {
   fs.mkdirSync(OUT, { recursive: true });
+  if (process.env.POLYCLI_SMOKE === 'git') return runGit(ctx);
   if (process.env.POLYCLI_SMOKE === 'ui') return runUi(ctx);
   if (process.env.POLYCLI_SMOKE === 'clip') return runClip(ctx);
   if (process.env.POLYCLI_SMOKE === 'needs') return runNeeds(ctx);

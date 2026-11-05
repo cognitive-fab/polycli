@@ -108,6 +108,22 @@ Every CLI pane has a header strip that mirrors Claude's welcome banner and stays
 | Plan `Claude Ultra` | `~/.claude.json` → `oauthAccount.planDisplayName` (`"Ultra"`), shown as "Claude Ultra". Only that one field is read. |
 | Folder `~\code\polycli` | Where the session is now: the `cwd` of its `claude agents --json` entry (polled every 5 s), shortened with `~`. A session can move, e.g. into a git worktree via EnterWorktree (seen: `cosa` → `cosa\.claude\worktrees\fix-backup-verify-sigpipe`). The launch folder is kept as `cwd` and the current one as `liveCwd`; the header shows a "worktree" tag and the launch folder in its tooltip, and the branch (`git rev-parse` in the current folder) and the VS Code button follow it. |
 
+**Git line** (fourth header line, hidden outside a git repository), for the folder the session is in now:
+- branch (or detached HEAD); `↑ahead ↓behind` against the upstream, "synced", or "not published"; "● n changed" or "clean"; conflicts;
+- the GitHub repo (from the `origin` remote, https or ssh form) and the branch's pull request with its checks reduced to ✓ / ✗ / pending counts (`gh pr view`; skipped quietly when `gh` is missing or signed out);
+- actions: **Commit** (when there are changes), **Push** / **Publish** (when ahead, or no upstream), **Deploy** (when configured), ↻ refresh.
+
+How it is read and acted on:
+- One `git status --porcelain=v2 --branch` per folder, with `--no-optional-locks` / `GIT_OPTIONAL_LOCKS=0` so a background read never takes the index lock from Claude's or the user's own commit, `GIT_TERMINAL_PROMPT=0`, and timeouts. Results are cached per folder (sessions sharing a folder share them) and kept out of `state.json`.
+- Refreshed on `Stop` and `PostToolUse` (debounced), on a folder change, after polycli's own commit or push, and every 20 s for open sessions; the PR every 60 s. The UI is told only when something changed.
+- **Commit** lists the changed files (repo-relative), optionally stages everything (`git add -A`), and passes the message on stdin (`git commit -F -`); hooks and signing run as usual, never `--no-verify`. **Ask Claude to commit** sends the session a prompt instead (only when it is attached and idle).
+- **Push** confirms branch → upstream and the commit count; with no upstream it runs `git push -u origin HEAD`. Never forced; a rejection (remote moved on) is shown as git reports it.
+- Commit and Push are disabled while the session is busy or waiting on a prompt, since files may be half edited.
+- **Deploy** runs the workstream's deploy command (⚙ Settings), or else a `deploy` script found in `package.json` (session folder, then repo root), after a confirmation that shows the command and folder. It runs in a new shell tab of the workstream, so the output is visible and the workstream's variables apply. The command is passed only to that first start: a restored shell is a plain shell, so restarting polycli never deploys again.
+- GitHub links open in the browser only after the main process re-checks they are `https://github.com/…`.
+
+**Themes.** System / Light / Dark (top bar), saved in `ui.theme`; System follows Windows. Colors are CSS tokens with a light set; terminals switch theme live and the light one has a full 16-color palette. Claude Code's own UI was readable on the light terminal in the test screenshot.
+
 ### 5.1 statusLine feed
 The per-session `--settings` file sets `statusLine` to `polycli-status`. The script:
 1. reads the JSON Claude passes on stdin;
