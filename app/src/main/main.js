@@ -48,7 +48,7 @@ function vscodeTarget({ sessionId, workstreamId, shellId, doc }) {
       if (!d) throw new Error('unknown document');
       return d.path;
     }
-    return s.cwd;
+    return s.liveCwd || s.cwd;   // follows the session into a worktree
   }
   if (shellId) return manager.shell(shellId).cwd;
   if (workstreamId) return manager.ws(workstreamId).folder;

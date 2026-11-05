@@ -103,7 +103,11 @@ class Manager extends EventEmitter {
   snapshot() {
     return {
       workstreams: this.state.workstreams.map(w => ({ ...w, env: (w.env || []).map(e => ({ name: e.name })), uses: w.uses || [], envRev: w.envRev || 0 })),
-      sessions: this.state.sessions.map(s => ({ ...s, termLive: this.pty.isLive(`s:${s.id}`), trustLive: this.pty.isLive(`t:${s.id}`), cwdShort: tildify(s.cwd) })),
+      sessions: this.state.sessions.map(s => {
+        const here = s.liveCwd || s.cwd;
+        return { ...s, termLive: this.pty.isLive(`s:${s.id}`), trustLive: this.pty.isLive(`t:${s.id}`), cwdShort: tildify(here), startedShort: tildify(s.cwd),
+          worktree: (/[\\/]\.claude[\\/]worktrees[\\/]([^\\/]+)/.exec(here) || [])[1] || null };
+      }),
       shells: this.state.shells.map(h => ({ ...h, termLive: this.pty.isLive(`h:${h.id}`), cwdShort: tildify(h.cwd) })),
       ui: this.state.ui,
       plan: this.plan,
@@ -512,6 +516,21 @@ class Manager extends EventEmitter {
     }
   }
 
+  // A session can move, e.g. into a git worktree (EnterWorktree). `cwd` stays the folder
+  // it was started in; `liveCwd` is where `claude agents` says it is now. The header,
+  // the branch and VS Code follow liveCwd.
+  followCwd(s, dir) {
+    if (typeof dir !== 'string' || !path.isAbsolute(dir)) return;
+    const same = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+    const next = same(dir, s.cwd) ? null : dir;
+    if (next === (s.liveCwd || null) || (next && s.liveCwd && same(next, s.liveCwd))) return;
+    if (next && !fs.existsSync(next)) return;
+    s.liveCwd = next;
+    store.event('session-cwd', { session: s.id, cwd: next || s.cwd });
+    git(next || s.cwd, ['rev-parse', '--abbrev-ref', 'HEAD']).then(b => { s.header.branch = b; this.changed(); });
+    this.changed();
+  }
+
   readTranscriptHeader(s) {
     if (!s.transcriptPath) return;
     const a = transcriptTail(s.transcriptPath);
@@ -559,6 +578,7 @@ class Manager extends EventEmitter {
         continue;
       }
       this.endedPolls.delete(s.id);
+      if (entry.cwd) this.followCwd(s, entry.cwd);
       // Attached and ready: Claude says it waits for input, or the attach client drew
       // its screen and has been quiet for 3 s.
       if (['starting', 'detached'].includes(s.state) && this.pty.isLive(`s:${s.id}`)) {

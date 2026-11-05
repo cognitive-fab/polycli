@@ -84,6 +84,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .banner-lines .l3 { color: var(--text-dim); }
 .banner-lines .cwd { background: none; border: 0; padding: 0; color: var(--accent); font-family: var(--mono); font-size: 12.5px; text-decoration: underline dotted; text-underline-offset: 3px; }
 .banner-lines .branch { color: var(--text-faint); margin-left: 10px; }
+.banner-lines .wt { margin-left: 8px; padding: 0 6px; border: 1px solid var(--line); border-radius: 999px; color: var(--needs); font-size: 11px; }
 .banner-lines .sid { background: none; border: 0; padding: 0 0 0 10px; color: var(--text-faint); font-family: var(--mono); font-size: 12px; cursor: pointer; }
 .banner-lines .sid:hover { color: var(--accent); }
 .pane-actions { display: flex; gap: 6px; align-items: center; flex: none; }

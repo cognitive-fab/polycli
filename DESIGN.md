@@ -106,7 +106,7 @@ Every CLI pane has a header strip that mirrors Claude's welcome banner and stays
 | Model `Opus 5.5` | statusLine input `model.display_name` (live, so it follows `/model`). Fallback: transcript `model` (`claude-opus-5-5`) mapped to a display name. |
 | Effort `high` | Transcript `perTurnEffort` on assistant lines (verified; the statusLine input has no effort field), falling back to the launch `--effort` |
 | Plan `Claude Ultra` | `~/.claude.json` → `oauthAccount.planDisplayName` (`"Ultra"`), shown as "Claude Ultra". Only that one field is read. |
-| Folder `~\code\polycli` | statusLine `workspace.current_dir`, shortened with `~`; branch from `git rev-parse` |
+| Folder `~\code\polycli` | Where the session is now: the `cwd` of its `claude agents --json` entry (polled every 5 s), shortened with `~`. A session can move, e.g. into a git worktree via EnterWorktree (seen: `cosa` → `cosa\.claude\worktrees\fix-backup-verify-sigpipe`). The launch folder is kept as `cwd` and the current one as `liveCwd`; the header shows a "worktree" tag and the launch folder in its tooltip, and the branch (`git rev-parse` in the current folder) and the VS Code button follow it. |
 
 ### 5.1 statusLine feed
 The per-session `--settings` file sets `statusLine` to `polycli-status`. The script:
