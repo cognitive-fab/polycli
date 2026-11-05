@@ -5,6 +5,8 @@ const { paths, ensureDirs } = require('./paths');
 const { installHelpers, HookServer } = require('./hooks');
 const { PtyClient } = require('./ptyclient');
 const { Manager } = require('./sessions');
+const { Cowork } = require('./cowork');
+const { BridgeServer, bridgePipeName } = require('./bridge');
 const vscode = require('./vscode');
 const store = require('./store');
 
@@ -14,6 +16,7 @@ if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
 
 let win = null;
 let manager = null;
+let cowork = null;
 
 function createWindow() {
   win = new BrowserWindow({
@@ -31,11 +34,15 @@ function send(channel, ...args) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, ...args);
 }
 
+function snapshot() {
+  return { ...manager.snapshot(), cowork: cowork ? cowork.snapshot() : null };
+}
+
 function pushState() {
-  const snap = manager.snapshot();
+  const snap = snapshot();
   send('state', snap);
   const ws = snap.workstreams.find(w => w.id === snap.ui.activeWorkstream);
-  const waiting = snap.sessions.filter(s => s.state === 'needs-you').length;
+  const waiting = snap.sessions.filter(s => s.state === 'needs-you').length + (snap.cowork ? snap.cowork.approvals.length + snap.cowork.pendingLinks.length : 0);
   if (win && !win.isDestroyed()) win.setTitle(`${waiting ? `(${waiting}) ` : ''}${ws ? ws.name + ' — ' : ''}polycli`);
 }
 
@@ -56,7 +63,24 @@ function vscodeTarget({ sessionId, workstreamId, shellId, doc }) {
 }
 
 const OPS = {
-  state: () => manager.snapshot(),
+  state: () => snapshot(),
+  coworkDecide: a => cowork.decide({ kind: a.kind, id: a.id, decision: a.decision === 'approve' ? 'approve' : 'reject', workstreamId: a.workstreamId, text: a.text }),
+  coworkRejectAllLinks: () => cowork.rejectAllLinks(),
+  coworkMute: a => cowork.mute(a.minutes),
+  coworkRevoke: a => cowork.revoke(a.id),
+  installBridge: () => require('./bridge').installExtension(),
+  // Artifacts come from Cowork: links open only if https, files are only revealed in
+  // Explorer (never opened, which could run them).
+  openArtifact: a => {
+    const art = cowork.c.artifacts.find(x => x.id === a.id);
+    if (!art) throw new Error('unknown artifact');
+    if (a.what === 'url' && art.url && /^https:\/\//i.test(art.url)) return shell.openExternal(art.url);
+    if (a.what === 'path' && art.path) {
+      if (!require('fs').existsSync(art.path)) throw new Error('The file is no longer there');
+      return shell.showItemInFolder(art.path);
+    }
+    throw new Error('nothing to open');
+  },
   createWorkstream: a => manager.createWorkstream(a),
   renameWorkstream: a => manager.renameWorkstream(a),
   updateWorkstream: a => manager.updateWorkstream(a),
@@ -108,6 +132,11 @@ app.whenReady().then(() => {
   manager = new Manager(pty);
   pty.on('data', (term, data) => send('pty:data', term, data));
   manager.on('changed', pushState);
+  cowork = new Cowork(manager);
+  cowork.on('attention', () => { if (win && !win.isDestroyed() && !win.isFocused()) win.flashFrame(true); });
+  const bridge = new BridgeServer(cowork);
+  bridge.on('error', e => console.error(`bridge pipe (${bridgePipeName()}) failed`, e.message));
+  bridge.start();
   manager.on('attention', s => {
     // Windows only delivers toasts for an app registered with a Start menu shortcut
     // (the installer creates it). A dev run gets "Settings prevent the notification
@@ -136,12 +165,12 @@ app.whenReady().then(() => {
     manager.restore();
     manager.startPolling();
     pushState();
-    if (process.env.POLYCLI_SMOKE) require('./smoke').run({ app, win, manager }).catch(e => { console.error(e); app.exit(1); });
+    if (process.env.POLYCLI_SMOKE) require('./smoke').run({ app, win, manager, cowork }).catch(e => { console.error(e); app.exit(1); });
   });
 
   win.on('focus', () => win.flashFrame(false));
   app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
-  app.on('before-quit', () => { manager.dispose(); hooks.stop(); pty.dispose(); store.flush(); });
+  app.on('before-quit', () => { cowork.dispose(); bridge.stop(); manager.dispose(); hooks.stop(); pty.dispose(); store.flush(); });
 });
 
 app.on('window-all-closed', () => app.quit());

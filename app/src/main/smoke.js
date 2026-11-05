@@ -354,8 +354,84 @@ async function runHelp({ app, win, manager }) {
   app.exit(report.ok ? 0 : 1);
 }
 
+// Cowork bridge end to end: the real extension process (JSON-RPC over stdio) → pipe →
+// polycli → a real Haiku session. Approvals are given through the Cowork core, as the
+// buttons do. Also screenshots the Cowork bar for the help.
+async function runBridge({ app, win, manager, cowork }) {
+  const report = { phase: 'bridge', steps: [] };
+  const step = (name, data = {}) => { report.steps.push({ name, ...data }); console.log('SMOKE', name, JSON.stringify(data).slice(0, 300)); };
+  const wc = win.webContents;
+  let sid = null, ext = null;
+  try {
+    const ws = manager.createWorkstream({ name: 'acme-api', folder: FOLDER });
+    const s = await manager.newSession({ workstreamId: ws.id, role: 'main', model: 'haiku' });
+    sid = s.id;
+    await waitFor(() => manager.session(sid).state === 'idle' && manager.pty.isLive(`s:${sid}`), 90000, 'idle');
+    await sleep(2000);
+
+    const { spawn } = require('child_process');
+    ext = spawn('node', [path.join(__dirname, '..', '..', '..', 'bridge', 'server', 'index.js')], { env: process.env, stdio: ['pipe', 'pipe', 'inherit'] });
+    let buf = '', n = 0;
+    const pending = new Map();
+    ext.stdout.setEncoding('utf8');
+    ext.stdout.on('data', d => { buf += d; let i; while ((i = buf.indexOf('\n')) >= 0) { const m = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1); pending.get(m.id)?.(m); pending.delete(m.id); } });
+    const rpc = (method, params) => new Promise(r => { const id = ++n; pending.set(id, r); ext.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n'); });
+    const tool = async (name, args) => { const r = await rpc('tools/call', { name, arguments: args }); const t = r.result.content[0].text; try { return JSON.parse(t); } catch { return { error: t }; } };
+    await rpc('initialize', { protocolVersion: '2025-06-18', clientInfo: { name: 'smoke' } });
+
+    let r = await tool('polycli_link', { task_title: 'Q4 launch plan', workstream: 'acme-api' });
+    const link = r.link;
+    step('link', { state: r.state });
+    await sleep(1200);
+    try { fs.writeFileSync(path.join(OUT, 'bridge-link.png'), (await wc.capturePage()).toPNG()); } catch {}
+    cowork.decide({ kind: 'link', id: cowork.snapshot().pendingLinks[0].id, decision: 'approve', workstreamId: ws.id });
+    r = await tool('polycli_link_status', { link, wait_seconds: 5 });
+    step('link-status', r);
+
+    const readUntilDone = async (turn) => {
+      let v = await tool('polycli_read', { link, turn_id: turn, wait_seconds: 30 });
+      const t0 = Date.now();
+      while (!['done', 'failed', 'rejected'].includes(v.state) && Date.now() - t0 < 180000) v = await tool('polycli_read', { link, turn_id: turn, wait_seconds: 30 });
+      return v;
+    };
+
+    // Short prompt, approved by the user.
+    r = await tool('polycli_send', { link, session: 'main', text: 'Reply with exactly the word PONG and nothing else.', client_ref: 'smoke-1', wait_seconds: 1 });
+    step('send-1', r);
+    await sleep(1200);
+    const HELP = path.join(__dirname, '..', '..', 'resources', 'help');
+    try {
+      const rect = await wc.executeJavaScript(`(() => { const r = document.querySelector('#coworkStrip').getBoundingClientRect(); return { x: Math.floor(r.x), y: Math.floor(r.y), width: Math.ceil(r.width), height: Math.ceil(r.height) }; })()`);
+      fs.writeFileSync(path.join(HELP, 'cowork-approval.png'), (await wc.capturePage(rect)).toPNG());
+      report.shot = true;
+    } catch (e) { report.shot = `not captured: ${e.message || e}`; }
+    cowork.decide({ kind: 'turn', id: r.turn_id, decision: 'approve' });
+    const v1 = await readUntilDone(r.turn_id);
+    step('answer-1', v1);
+
+    // Long multi-line prompt: Claude shows it as [Pasted text …] and treats it as quoted
+    // content; the provenance line makes it act on it. Allowed by policy this time.
+    manager.updateWorkstream({ id: ws.id, coworkSend: 'allow' });
+    const notes = Array.from({ length: 20 }, (_, i) => `Note ${i + 1}: background detail that needs no action, lorem ipsum dolor sit amet.`).join('\n');
+    r = await tool('polycli_send', { link, session: 'main', text: `Reply with exactly the word LONGPONG and nothing else.\n${notes}`, client_ref: 'smoke-2', wait_seconds: 30 });
+    const v2 = ['done', 'failed'].includes(r.state) ? r : await readUntilDone(r.turn_id);
+    step('answer-2', v2);
+    r = await tool('polycli_add_artifact', { link, title: 'Launch plan', kind: 'document', url: 'https://claude.ai/artifact/demo', description: 'Draft v1' });
+    step('artifact', r);
+    report.ok = /PONG/.test(v1.response || '') && /LONGPONG/.test(v2.response || '') && !!r.artifact_id;
+  } catch (e) {
+    report.ok = false;
+    report.error = String(e.stack || e);
+  }
+  try { ext?.stdin.end(); } catch {}
+  if (sid) { try { await manager.deleteSession(sid); } catch {} }
+  fs.writeFileSync(path.join(OUT, 'bridge.json'), JSON.stringify(report, null, 2));
+  app.exit(report.ok ? 0 : 1);
+}
+
 async function run(ctx) {
   fs.mkdirSync(OUT, { recursive: true });
+  if (process.env.POLYCLI_SMOKE === 'bridge') return runBridge(ctx);
   if (process.env.POLYCLI_SMOKE === 'help') return runHelp(ctx);
   if (process.env.POLYCLI_SMOKE === 'git') return runGit(ctx);
   if (process.env.POLYCLI_SMOKE === 'ui') return runUi(ctx);

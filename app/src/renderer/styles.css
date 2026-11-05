@@ -187,6 +187,17 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .help code { font-family: var(--mono); font-size: 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
 .help ul, .help ol { padding-left: 20px; margin: 6px 0; }
 .help-img { display: block; max-width: 100%; margin: 10px 0 6px; border: 1px solid var(--line); border-radius: 8px; }
+.cowork-strip { border-bottom: 1px solid var(--line); background: #7c8cf812; max-height: 45vh; overflow-y: auto; }
+.cw-row { display: flex; align-items: flex-start; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--text-dim); }
+.cw-row:first-child { border-top: 0; }
+.cw-row b { color: var(--text); }
+.cw-row .grow { flex: 1; min-width: 0; }
+.cw-row select { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; font: inherit; }
+.cw-tag { flex: none; font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--accent); color: var(--on-accent); font-weight: 600; }
+.cw-text { margin: 6px 0 0; padding: 8px 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; font-family: var(--mono); font-size: 12px; color: var(--text); white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow: auto; }
+.cw-text .cw-first { color: var(--text-faint); }
+.cw-acts { display: flex; flex-direction: column; gap: 6px; flex: none; }
+.ok-text { color: var(--idle); }
 .modal .error { color: var(--bad); font-size: 12px; min-height: 16px; }
 
 .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--bg-elev); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; z-index: 60; max-width: 70vw; }

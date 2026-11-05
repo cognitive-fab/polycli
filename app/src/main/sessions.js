@@ -38,6 +38,9 @@ const dirKey = d => path.resolve(d).toLowerCase();
 // reads `blocked`. Ended = no entry, or no pid together with `stopped` / `done`.
 const running = e => !!e && (e.pid != null || !['stopped', 'done'].includes(e.state));
 const waiting = e => e.status === 'idle' || e.state === 'blocked';
+// Pane writes that are not the user typing: focus and SGR mouse reports, and the
+// terminal's replies to queries (DA, DSR, DECRQM, OSC, DCS).
+const NOT_TYPING = /^(?:\x1b\[[IO]|\x1b\[<\d+;\d+;\d+[Mm]|\x1b\[[?>]?[\d;]*[cRn]|\x1b\[\??[\d;]*\$y|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1bP[^\x1b]*\x1b\\)+$/;
 
 const newId = () => crypto.randomUUID();
 const now = () => Date.now();
@@ -94,6 +97,7 @@ class Manager extends EventEmitter {
     this.endedPolls = new Map();      // session id → consecutive stopped/done/missing polls
     this.ops = new Map();             // session id → in-flight lifecycle operation
     this.lastOutput = new Map();      // terminal id → time of last output
+    this.lastInput = new Map();       // terminal id → time the user last typed in the pane
     this.gitByDir = new Map();        // folder → { info, repo, pr, deploy, at, prAt, busy }; not saved
     this.gitTimers = new Map();       // folder → debounce timer
     pty.on('data', id => this.lastOutput.set(id, now()));
@@ -145,6 +149,7 @@ class Manager extends EventEmitter {
     if (patch.state && patch.state !== before) {
       s.stateSince = now();
       store.event('state', { session: s.id, from: before, to: patch.state });
+      this.emit('session-state', s, before, patch.state);
       if (patch.state === 'needs-you') this.emit('attention', s);
     }
     this.changed();
@@ -165,8 +170,11 @@ class Manager extends EventEmitter {
   }
   // Workstream settings. env: [{ name, value? }]; a missing value keeps the stored one.
   // uses: names of global variables this workstream relies on (bookkeeping only).
-  updateWorkstream({ id, name, color, env, uses, deploy }) {
+  updateWorkstream({ id, name, color, env, uses, deploy, coworkSend, coworkOpen }) {
     const w = this.ws(id);
+    // Cowork bridge policy: ask (default) or allow, for prompts and for new sessions.
+    if (coworkSend !== undefined) w.coworkSend = coworkSend === 'allow' ? 'allow' : 'ask';
+    if (coworkOpen !== undefined) w.coworkOpen = coworkOpen === 'allow' ? 'allow' : 'ask';
     if (deploy !== undefined) {
       const d = String(deploy ?? '').trim();
       if (d.length > 500 || /[\r\n\0]/.test(d)) throw new Error('The deploy command must be one line');
@@ -401,45 +409,62 @@ class Manager extends EventEmitter {
   // within a few seconds, Enter is sent once more: right after an attach or respawn
   // the input box can swallow the first one.
   async submitPrompt(id, text) {
-    const s = this.session(id);
-    if (typeof text !== 'string' || !text.trim()) throw new Error('empty prompt');
-    if (/[\x00-\x08\x0b-\x1f\x7f]/.test(text)) throw new Error('prompt contains control characters');
+    return this.pasteAndSubmit(this.session(id), [text]);
+  }
+  // Pastes each part (bracketed paste) and then presses Enter. Claude shows a long or
+  // multi-line paste as "[Pasted text #n +k lines]" (after up to ~6 s), so either that
+  // or the part's first line on screen counts as shown. Only the first part is retried,
+  // when nothing showed: right after an attach the TUI drops input.
+  async pasteAndSubmit(s, parts) {
+    for (const text of parts) {
+      if (typeof text !== 'string' || !text.trim()) throw new Error('empty prompt');
+      if (/[\x00-\x08\x0b-\x1f\x7f]/.test(text)) throw new Error('prompt contains control characters');
+    }
     const term = `s:${s.id}`;
     if (!this.pty.isLive(term)) throw new Error('session is not attached');
     const sleep = ms => new Promise(r => setTimeout(r, ms));
     const before = s.promptSeq || 0;
-    // Right after an attach the TUI drops input until it has finished drawing: wait
-    // for 1 s without output (10 s at most), then check the paste shows up on screen.
-    // Claude may draw spaces as cursor moves (CSI n C), so compare without whitespace.
-    const probe = text.trim().split('\n')[0].replace(/\s+/g, '').slice(0, 16);
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const t0 = now();
-      while (now() - (this.lastOutput.get(term) || 0) < 1000 && now() - t0 < 10000) await sleep(100);
-      const mark = this.pty.scrollback(term).length;
-      this.pty.write(term, `\x1b[200~${text}\x1b[201~`);
-      const t1 = now();
-      let shown = false;
-      // Claude can take ~3 s to draw a paste; pasting again too early doubles it.
-      while (!shown && now() - t1 < 6000) {
-        await sleep(100);
-        shown = this.pty.scrollback(term).slice(Math.max(0, mark - 64)).replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/\s+/g, '').includes(probe);
+    const plain = str => str.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/\s+/g, '');
+    for (let i = 0; i < parts.length; i++) {
+      const text = parts[i];
+      // Claude may draw spaces as cursor moves (CSI n C), so compare without whitespace.
+      const probe = text.trim().split('\n')[0].replace(/\s+/g, '').slice(0, 16);
+      for (let attempt = 0; attempt < (i === 0 ? 3 : 1); attempt++) {
+        const t0 = now();
+        while (now() - (this.lastOutput.get(term) || 0) < 1000 && now() - t0 < 10000) await sleep(100);
+        const mark = this.pty.scrollback(term).length;
+        this.pty.write(term, `\x1b[200~${text}\x1b[201~`);
+        const t1 = now();
+        let shown = false;
+        // Pasting again too early would double the text.
+        while (!shown && now() - t1 < 8000) {
+          await sleep(100);
+          const fresh = plain(this.pty.scrollback(term).slice(Math.max(0, mark - 64)));
+          shown = fresh.includes(probe) || fresh.includes('[Pastedtext#');
+        }
+        if (shown) break;
       }
-      if (shown) break;
     }
     await sleep(300);
     for (let attempt = 0; attempt < 2; attempt++) {
       this.pty.write(term, '\r');
       const t0 = now();
-      while (now() - t0 < 3000) {
+      while (now() - t0 < 4000) {
         if ((s.promptSeq || 0) > before) return true;
-        await new Promise(r => setTimeout(r, 100));
+        await sleep(100);
       }
     }
     return false;
   }
 
-  // ---------- terminals ----------
-  write(termId, data) { if (typeof data === 'string' && data.length < 1e6) this.pty.write(termId, data); }
+  write(termId, data) {
+    if (typeof data !== 'string' || data.length >= 1e6) return;
+    // Typed text from the pane: the bridge doesn't paste into a prompt someone is
+    // typing or pasting (keys, arrows, bracketed paste). Focus and mouse reports and
+    // terminal replies (DA, DSR, mode and OSC replies) don't count.
+    if (!NOT_TYPING.test(data)) this.lastInput.set(termId, now());
+    this.pty.write(termId, data);
+  }
   resize(termId, cols, rows) {
     if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 2 || rows < 2 || cols > 1000 || rows > 500) return;
     const [kind, id] = termId.split(':');
@@ -502,6 +527,8 @@ class Manager extends EventEmitter {
     input = input && typeof input === 'object' ? input : {};
     if (input.session_id && !s.sessionId) s.sessionId = input.session_id;
     if (input.transcript_path) s.transcriptPath = input.transcript_path;
+    // Before the state changes below: the bridge settles its turn on Stop first.
+    this.emit('session-hook', s, event, input);
     switch (event) {
       case 'statusLine':
         Object.assign(s.header, {
@@ -740,4 +767,4 @@ class Manager extends EventEmitter {
   }
 }
 
-module.exports = { Manager, modelDisplay };
+module.exports = { Manager, modelDisplay, transcriptTail };

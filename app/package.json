@@ -7,7 +7,8 @@
   "scripts": {
     "start": "electron .",
     "smoke": "node scripts/smoke.js",
-    "persist": "node scripts/persist.js"
+    "persist": "node scripts/persist.js",
+    "bridge:pack": "npx -y @anthropic-ai/mcpb pack ../bridge ../out/polycli-bridge.mcpb"
   },
   "devDependencies": {
     "electron": "^45.2.3"

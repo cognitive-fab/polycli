@@ -214,6 +214,16 @@ Tools:
 
 The wait is capped at 40 s because the relay fails calls at 60 s (spike 0c), so Cowork long-polls with `polycli_read`. Cowork cannot answer a CLI permission prompt. A `needs-you` state tells Cowork "waiting for the user in polycli", and the user approves it in the pane.
 
+### 7.1a Built (2026-11-05)
+
+The bridge is implemented: the extension in `bridge/` (zero dependencies, packed with `npm run bridge:pack`), the pipe server in `app/src/main/bridge.js`, the turn/link core in `app/src/main/cowork.js`, and the UI (Cowork bar, Cowork panel, policies). Tools: `polycli_list`, `polycli_link`, `polycli_link_status`, `polycli_send`, `polycli_read`, `polycli_status`, `polycli_open_session`, `polycli_add_artifact`. Not built yet: `close` / `restart` tools, Edit & send, folder watching, legacy Cowork files, Pin a copy.
+
+**Findings that changed the delivery (probe, 2026-11-05):**
+- A long or multi-line bracketed paste is shown as `[Pasted text #1 +20 lines]` (after up to ~6 s), and `UserPromptSubmit` receives it wrapped in `<pasted_content id=…>`. Claude treats such pasted content as quoted data and declined to act on an instruction inside it. So every bridge prompt is preceded by a short line typed as the user's own input: `[polycli <turn id>] Request relayed from a Cowork task linked to this workstream (link <id>, approved by me in polycli | allowed by my polycli policy for this workstream). Please handle it:`. The wording is fixed: nothing the Cowork task chooses (not even its title) goes into this line, since Claude reads it as the user's own words. The approval bar shows this line above the prompt. With it, Claude answered the long prompt (smoke test: LONGPONG).
+- The `[polycli <turn id>]` marker is what correlates `UserPromptSubmit` with the turn (not a text comparison).
+- The paste check counts the `[Pasted text` placeholder as shown; otherwise long prompts were pasted three times.
+- **Esc does not fire `Stop`.** A running turn that goes busy → idle without `Stop` settles from the transcript's last assistant message written after the turn started, or fails as "ended without a response".
+
 ### 7.2 Delivering a prompt and reading the answer
 1. polycli keeps a per-session FIFO of bridge turns. A turn is written only when the session is `idle`.
 2. **Validate, then write.**

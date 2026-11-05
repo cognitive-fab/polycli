@@ -77,6 +77,7 @@ function render() {
   const ws = activeWs();
   $('#topTitle').textContent = ws ? `${ws.name} · ${ws.folderShort || ws.folder}` : '';
   renderInbox();
+  renderCowork();
   renderRail();
   renderTabs();
   renderPanes();
@@ -90,11 +91,98 @@ function render() {
 
 function renderInbox() {
   const waiting = S.sessions.filter(s => s.state === 'needs-you');
-  $('#inboxCount').textContent = waiting.length;
-  $('#inboxBtn').classList.toggle('hot', waiting.length > 0);
-  $('#inboxMenu').innerHTML = waiting.length
-    ? waiting.map(s => `<button class="inbox-item" data-tab="s:${s.id}"><b>${esc(s.name)}</b><small>${esc(s.attention?.message || '')}</small></button>`).join('')
-    : `<div class="inbox-item"><small>Nothing is waiting on you.</small></div>`;
+  const cw = S.cowork || { approvals: [], pendingLinks: [] };
+  const n = waiting.length + cw.approvals.length + cw.pendingLinks.length;
+  $('#inboxCount').textContent = n;
+  $('#inboxBtn').classList.toggle('hot', n > 0);
+  const items = [
+    ...waiting.map(s => `<button class="inbox-item" data-tab="s:${s.id}"><b>${esc(s.name)}</b><small>${esc(s.attention?.message || '')}</small></button>`),
+    ...cw.pendingLinks.map(l => `<div class="inbox-item"><b>Cowork link request</b><small>${esc(l.title)}: see the Cowork bar above the tabs</small></div>`),
+    ...cw.approvals.map(a => `<div class="inbox-item"><b>${a.kind === 'turn' ? `Cowork prompt for ${esc(a.sessionName)}` : `Cowork wants a new session (${esc(a.role)})`}</b><small>${esc(a.linkTitle)}: see the Cowork bar above the tabs</small></div>`),
+  ];
+  $('#inboxMenu').innerHTML = items.length ? items.join('') : `<div class="inbox-item"><small>Nothing is waiting on you.</small></div>`;
+}
+
+// ---------------- Cowork bar: link requests and approvals ----------------
+// Everything here comes from a Cowork task: escaped, shown in full, acted on only by a click.
+function renderCowork() {
+  const cw = S.cowork;
+  const bar = $('#coworkStrip');
+  if (!cw || (!cw.pendingLinks.length && !cw.approvals.length)) { bar.hidden = true; bar.innerHTML = ''; return; }
+  // Don't redraw while the user is choosing in a select or editing.
+  if (bar.contains(document.activeElement) && document.activeElement.matches('select, textarea')) return;
+  const wsOptions = sel => S.workstreams.map(w => `<option value="${w.id}" ${w.id === sel ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
+  const rows = [];
+  const links = cw.pendingLinks;
+  links.slice(0, 3).forEach(l => rows.push(`<div class="cw-row" data-cw-link="${l.id}">
+      <span class="cw-tag">Cowork</span>
+      <span class="grow">Task <b>${esc(l.title)}</b> wants to link to ${l.requested ? `workstream <b>${esc(l.requested)}</b>` : 'a workstream'}${l.requested && !l.workstreamId ? ' <span class="warn-text">(no workstream with that name)</span>' : ''}. Linking lets it send prompts to that workstream's sessions; each prompt still needs your approval unless you allow it.</span>
+      <select class="cw-ws">${wsOptions(l.workstreamId || S.ui.activeWorkstream)}</select>
+      <button class="btn primary" data-cw="link-approve">Link</button>
+      <button class="btn" data-cw="link-reject">Reject</button>
+    </div>`));
+  if (links.length > 3) rows.push(`<div class="cw-row"><span class="grow">${links.length - 3} more link request${links.length - 3 === 1 ? '' : 's'}</span></div>`);
+  if (links.length > 1) rows.push(`<div class="cw-row"><span class="grow"></span><button class="btn" data-cw="reject-all">Reject all requests</button><button class="btn" data-cw="mute">Mute requests for 15 min</button></div>`);
+  for (const a of cw.approvals) {
+    if (a.kind === 'turn') {
+      rows.push(`<div class="cw-row cw-approval" data-cw-turn="${a.id}">
+        <span class="cw-tag">Cowork</span>
+        <div class="grow"><div>Task <b>${esc(a.linkTitle)}</b> wants to send this prompt to <b>${esc(a.sessionName)}</b>${a.forced ? ' <span class="warn-text">(starts with a command character, so it always asks)</span>' : ''}:</div>
+          <pre class="cw-text"><span class="cw-first">${esc(a.firstLine)}</span>
+${esc(a.text)}</pre></div>
+        <div class="cw-acts"><button class="btn primary" data-cw="turn-approve">Send</button><button class="btn" data-cw="turn-reject">Reject</button></div>
+      </div>`);
+    } else {
+      const ws = S.workstreams.find(w => w.id === a.workstreamId);
+      rows.push(`<div class="cw-row cw-approval" data-cw-open="${a.id}">
+        <span class="cw-tag">Cowork</span>
+        <div class="grow"><div>Task <b>${esc(a.linkTitle)}</b> wants to start a Claude session <b>${esc(ws?.name || '')} · ${esc(a.role)}</b>${a.cwd ? ` in <code>${esc(a.cwd)}</code>` : ''}${a.model ? `, ${esc(a.model)}` : ''}${a.effort ? `, ${esc(a.effort)} effort` : ''}${a.prompt ? ', with this first prompt:' : '.'}</div>
+          ${a.prompt ? `<pre class="cw-text">${esc(a.prompt)}</pre>` : ''}</div>
+        <div class="cw-acts"><button class="btn primary" data-cw="open-approve">Start</button><button class="btn" data-cw="open-reject">Reject</button></div>
+      </div>`);
+    }
+  }
+  bar.innerHTML = rows.join('');
+  bar.hidden = false;
+}
+
+async function coworkClick(el) {
+  const act = el.dataset.cw;
+  const row = el.closest('.cw-row');
+  if (act === 'reject-all') return call('coworkRejectAllLinks');
+  if (act === 'mute') return call('coworkMute', { minutes: 15 }).then(() => toast('Cowork link requests muted for 15 minutes'));
+  if (act.startsWith('link-')) return call('coworkDecide', { kind: 'link', id: row.dataset.cwLink, decision: act === 'link-approve' ? 'approve' : 'reject', workstreamId: row.querySelector('.cw-ws')?.value });
+  if (act.startsWith('turn-')) return call('coworkDecide', { kind: 'turn', id: row.dataset.cwTurn, decision: act === 'turn-approve' ? 'approve' : 'reject' });
+  if (act.startsWith('open-')) return call('coworkDecide', { kind: 'open', id: row.dataset.cwOpen, decision: act === 'open-approve' ? 'approve' : 'reject' });
+}
+
+// The Cowork panel of a workstream: linked tasks, artifacts they reported, recent prompts.
+function coworkDialog(ws) {
+  const cw = S.cowork || { links: [], artifacts: [], turns: [] };
+  const links = cw.links.filter(l => l.workstreamId === ws.id);
+  const arts = cw.artifacts.filter(a => a.workstreamId === ws.id).slice().reverse();
+  const sids = new Set(S.sessions.filter(s => s.workstreamId === ws.id).map(s => s.id));
+  const turns = cw.turns.filter(t => sids.has(t.sessionId)).slice().reverse().slice(0, 20);
+  const when = t => new Date(t).toLocaleString();
+  const form = modal(`<h3>${esc(ws.name)} · Cowork</h3>
+    <div class="field"><span>Linked Cowork tasks</span>
+      ${links.length ? `<table class="keys-table"><tbody>${links.map(l => `<tr><td><b>${esc(l.title)}</b><br><small>${esc(when(l.createdAt))}</small></td><td>${l.state === 'active' ? '<span class="ok-text">active</span>' : esc(l.state)}</td><td style="text-align:right">${l.state === 'active' ? `<button type="button" class="btn" data-revoke="${l.id}">Revoke</button>` : ''}</td></tr>`).join('')}</tbody></table>`
+        : '<div class="hint">No Cowork task is linked yet. In a Cowork task, ask it to use the polycli tools (polycli_link) for this workstream.</div>'}
+      <div class="hint">Cowork reaches polycli through the <b>polycli bridge</b> extension of the Claude desktop app. <button type="button" class="btn" data-install>Install or update the extension…</button></div>
+    </div>
+    <div class="field"><span>Artifacts and documents reported by Cowork</span>
+      ${arts.length ? `<table class="keys-table"><tbody>${arts.map(a => `<tr><td><b>${esc(a.title)}</b> <small>${esc(a.kind)}</small>${a.description ? `<br><small>${esc(a.description)}</small>` : ''}<br><small>${esc(a.linkTitle)} · ${esc(when(a.at))}</small></td><td style="text-align:right;white-space:nowrap">${a.url ? `<button type="button" class="btn" data-art="${a.id}" data-what="url" title="${esc(a.url)}">Open link</button>` : ''} ${a.path ? `<button type="button" class="btn" data-art="${a.id}" data-what="path" title="${esc(a.path)}">Show file</button>` : ''}</td></tr>`).join('')}</tbody></table>`
+        : '<div class="hint">None yet.</div>'}
+    </div>
+    <div class="field"><span>Recent prompts from Cowork</span>
+      ${turns.length ? `<table class="keys-table"><tbody>${turns.map(t => `<tr><td><small>${esc(t.sessionName)} · ${esc(t.linkTitle)}</small><br>${esc(t.text)}${t.response ? `<br><small>→ ${esc(t.response)}</small>` : ''}${t.reason ? `<br><small class="warn-text">${esc(t.reason)}</small>` : ''}</td><td>${esc(t.state)}</td></tr>`).join('')}</tbody></table>`
+        : '<div class="hint">None yet.</div>'}
+    </div>
+    <div class="modal-actions"><button type="button" class="btn" data-cancel hidden></button><button class="btn primary">Close</button></div>`,
+  async () => {}, { wide: true });
+  form.querySelectorAll('[data-revoke]').forEach(b => b.onclick = async () => { await call('coworkRevoke', { id: b.dataset.revoke }); b.closest('tr').querySelector('td:nth-child(2)').textContent = 'revoked'; b.remove(); });
+  form.querySelectorAll('[data-art]').forEach(b => b.onclick = () => call('openArtifact', { id: b.dataset.art, what: b.dataset.what }));
+  form.querySelector('[data-install]').onclick = () => call('installBridge').then(() => toast('The Claude desktop app opens its install dialog'));
 }
 
 function renderRail() {
@@ -115,6 +203,7 @@ function renderRail() {
           <button class="chip" data-act="newClaude">+ Claude</button>
           <button class="chip" data-act="newShell">+ Shell</button>
           <button class="chip" data-act="wsCode" title="Open the workstream folder in VS Code">VS Code</button>
+          <button class="chip" data-act="wsCowork" title="Cowork tasks linked to this workstream, their artifacts and prompts">Cowork${(() => { const n = (S.cowork?.links || []).filter(l => l.workstreamId === w.id && l.state === 'active').length; return n ? ` · ${n}` : ''; })()}</button>
           <button class="chip" data-act="wsSettings" title="Name, color, environment variables and the global keys this workstream uses">⚙ Settings${(w.env || []).length ? ` · ${w.env.length} var${w.env.length === 1 ? '' : 's'}` : ''}</button>
         </div>
       </div>`;
@@ -188,6 +277,11 @@ function noticeFor(s) {
   if (s.state === 'untrusted') return `<div class="notice warn"><span class="grow">This folder isn't trusted by Claude Code yet. Answer the trust prompt below, then type <b>/exit</b>; polycli starts the session right after.</span>${s.trustLive ? '' : '<button class="btn" data-act="retrust">Show trust prompt</button>'}</div>`;
   if (s.state === 'needs-you') return `<div class="notice warn"><span class="grow">${esc(s.attention?.message || 'Claude needs your attention')}</span></div>`;
   if (s.elsewhere && !s.termLive) return `<div class="notice info"><span class="grow">Attached in another terminal (<code>claude attach ${esc(s.bgId)}</code>). The session keeps running there.</span><button class="btn" data-act="reopen">Take back</button></div>`;
+  const cwTurn = (S.cowork?.turns || []).filter(t => t.sessionId === s.id && ['queued', 'delivering', 'running'].includes(t.state));
+  if (cwTurn.length) {
+    const t = cwTurn.find(x => x.state !== 'queued') || cwTurn[0];
+    return `<div class="notice info"><span class="grow">◇ From Cowork (${esc(t.linkTitle)}): ${esc(t.text.split('\n')[0].slice(0, 160))}${t.state === 'queued' && t.waitReason ? ` · ${esc(t.waitReason)}` : ''}${cwTurn.length > 1 ? ` · ${cwTurn.length - 1} more queued` : ''}</span></div>`;
+  }
   const w = S.workstreams.find(x => x.id === s.workstreamId);
   if (w && s.state !== 'closed' && (s.envRev || 0) !== (w.envRev || 0)) return `<div class="notice info"><span class="grow">The workstream's environment variables changed. Restart the session to apply them (the conversation is kept).</span><button class="btn" data-act="restart">⟳ Restart</button></div>`;
   if (s.state === 'failed') return `<div class="notice err"><span class="grow">${esc(s.error || 'The session failed to start.')}</span><button class="btn" data-act="restart">Try again</button></div>`;
@@ -465,6 +559,10 @@ async function wsSettingsDialog(ws) {
       <div class="hint" id="envWarn"></div>
       <div class="hint">Every Claude session and new shell in this workstream gets them, on top of your Windows variables (a workstream value wins). Values are stored encrypted for your Windows account and are not shown again. When a session starts they are written into its settings file under %APPDATA%\\polycli\\run, which Claude reads. Running sessions pick up changes on Restart.</div>
     </div>
+    <div class="row">
+      <label class="field"><span>Prompts from linked Cowork tasks</span><select name="coworkSend"><option value="ask" ${(ws.coworkSend || 'ask') === 'ask' ? 'selected' : ''}>Ask me each time</option><option value="allow" ${ws.coworkSend === 'allow' ? 'selected' : ''}>Send without asking</option></select></label>
+      <label class="field"><span>New sessions requested by Cowork</span><select name="coworkOpen"><option value="ask" ${(ws.coworkOpen || 'ask') === 'ask' ? 'selected' : ''}>Ask me each time</option><option value="allow" ${ws.coworkOpen === 'allow' ? 'selected' : ''}>Start without asking (in this folder)</option></select></label>
+    </div>
     <label class="field"><span>Deploy command (runs in a new shell tab from the Deploy button; leave empty to use a package.json "deploy" script if there is one)</span><input name="deploy" value="${esc(ws.deploy || '')}" placeholder="npm run deploy" spellcheck="false" style="font-family:var(--mono)"></label>
     <div class="field"><span>Global keys this workstream uses (for your own tracking; every session already has them)</span>
       <div class="key-checks">${globals.length ? globals.map(g => `<label class="key-check"><input type="checkbox" name="uses" value="${esc(g.name)}" ${uses.has(g.name) ? 'checked' : ''}><code>${esc(g.name)}</code>${g.scope === 'machine' ? '<small>machine</small>' : ''}</label>`).join('') : '<span class="hint">No key-like Windows variables found.</span>'}</div>
@@ -476,7 +574,7 @@ async function wsSettingsDialog(ws) {
       const value = r.querySelector('.env-value').value;
       return r.dataset.existing && !value ? { name } : { name, value };
     }).filter(e => e.name || e.value);
-    await api.call('updateWorkstream', { id: ws.id, name: fd.get('name'), color, env, uses: fd.getAll('uses'), deploy: fd.get('deploy') });
+    await api.call('updateWorkstream', { id: ws.id, name: fd.get('name'), color, env, uses: fd.getAll('uses'), deploy: fd.get('deploy'), coworkSend: fd.get('coworkSend'), coworkOpen: fd.get('coworkOpen') });
     toast('Workstream saved');
   }, { wide: true });
   const rows = form.querySelector('#envRows');
@@ -580,7 +678,8 @@ function markdown(src) {
     if ((m = /^(- |\d+\. )(.*)$/.exec(line))) {
       if (para.length) { out.push(`<p>${mdInline(para.join(' '))}</p>`); para = []; }
       const tag = m[1] === '- ' ? 'ul' : 'ol';
-      if (list !== tag) { if (list) out.push(`</${list}>`); out.push(`<${tag}>`); list = tag; }
+      const start = tag === 'ol' && parseInt(m[1], 10) > 1 ? ` start="${parseInt(m[1], 10)}"` : '';
+      if (list !== tag) { if (list) out.push(`</${list}>`); out.push(`<${tag}${start}>`); list = tag; }
       out.push(`<li>${mdInline(m[2])}</li>`);
       continue;
     }
@@ -606,6 +705,8 @@ function openVSCode(args, e) {
 }
 
 document.addEventListener('click', async e => {
+  const cwEl = e.target.closest('[data-cw]');
+  if (cwEl) return coworkClick(cwEl);
   const el = e.target.closest('[data-close],[data-tab],[data-select-ws],[data-act],[data-reopen],[data-closed]');
   if (!el) {
     if (!e.target.closest('.inbox-menu')) $('#inboxMenu').hidden = true;
@@ -642,6 +743,7 @@ document.addEventListener('click', async e => {
   if (act === 'newShell' && ws) return call('newShell', { workstreamId: ws.id });
   if (act === 'wsCode' && ws) return openVSCode({ workstreamId: ws.id }, e);
   if (act === 'wsSettings' && ws) return wsSettingsDialog(ws);
+  if (act === 'wsCowork' && ws) return coworkDialog(ws);
   if (act === 'code' && sid) return openVSCode({ sessionId: sid }, e);
   if (act === 'code-shell' && hid) return openVSCode({ shellId: hid }, e);
   if (act === 'restart-shell' && hid) return call('restartShell', { id: hid });

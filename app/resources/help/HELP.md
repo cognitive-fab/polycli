@@ -75,6 +75,26 @@ Click the **⧉ id** in the header to copy `claude attach <id>`, and run it in a
 
 **Keys** in the top bar lists the key-like variables saved in Windows (names only), which workstreams use each one, and which workstreams set their own value.
 
+## Cowork bridge
+
+Cowork tasks can work with your polycli sessions: link to a workstream, send prompts to its Claude sessions and read the answers, start new sessions for parallel work, and report the artifacts and documents they produce.
+
+**Set up once.** Click **Cowork** under a workstream, then **Install or update the extension…**. The Claude desktop app opens its install dialog for the **polycli bridge** extension (it says the extension is unsigned); install it. polycli must be running for Cowork to reach it.
+
+**In a Cowork task**, ask for it in plain words, for example: *"Use the polycli tools: link this task to the acme-api workstream, then ask the main session to run the tests and tell me the result."*
+
+1. **Link.** The task asks to link; a **Cowork** bar appears above the tabs. Pick the workstream and click **Link**, or **Reject**. Several requests can be rejected at once, or muted for 15 minutes.
+2. **Prompts.** Each prompt the task wants to send appears in the bar, in full, with the target session. Click **Send** or **Reject**.
+
+![A prompt from Cowork waiting for approval](cowork-approval.png)
+
+3. **Delivery.** polycli types the prompt into the session when it is idle (never while you are typing in it), with a first line saying which Cowork task sent it. The tab shows **◇ From Cowork** while it runs, and the answer goes back to the task.
+4. **Permission prompts** inside the session are still yours to answer in polycli; the Cowork task waits.
+
+**Policies** (workstream **⚙ Settings**): prompts from Cowork can be sent without asking, and new sessions it requests can start without asking (only in the workstream folder). Prompts that start with `!`, `/`, `#` or `@` always ask.
+
+The **Cowork** panel of a workstream lists the linked tasks (with **Revoke**), the artifacts and documents they reported (**Open link**, **Show file**), and their recent prompts and answers.
+
 ## Themes
 
 The top-bar button cycles **System**, **Light** and **Dark**. System follows Windows.
