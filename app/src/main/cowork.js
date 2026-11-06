@@ -22,6 +22,7 @@ const MAX_RESPONSE = 64 * 1024;
 const KEEP_TURNS = 300;
 const KEEP_ARTIFACTS = 1000;
 const TYPING_QUIET_MS = 5000;            // don't paste while the user types in the pane
+const SETTLE_QUIET_MS = 1500;            // pane quiet this long after idle-without-Stop: the turn ended
 const MODE_PREFIX = /^\s*[!/#@]/;        // Claude input modes: bash, command, memory, file
 
 const sha = s => crypto.createHash('sha256').update(String(s)).digest('hex');
@@ -46,6 +47,7 @@ class Cowork extends EventEmitter {
     this.waiters = new Set();
     this.delivering = new Set();          // session ids with a paste in progress
     this.stuck = new Map();               // session id → { at, seq } after a paste that was never submitted
+    this.settling = new Set();            // turn ids being checked after an idle without Stop
     // A turn that was being pasted when polycli stopped may or may not have landed.
     for (const t of this.c.turns) if (t.state === 'delivering') this.finish(t, 'failed', { reason: 'polycli stopped while delivering this prompt' }, false);
     manager.on('session-hook', (s, event, input) => this.onHook(s, event, input));
@@ -84,7 +86,9 @@ class Cowork extends EventEmitter {
     const l = this.link(token);
     if (l.state === 'pending') throw new Error('The link is still waiting for the user in polycli; poll polycli_link_status');
     if (l.state !== 'active') throw new Error(`The link is ${l.state}`);
-    if (!this.m.state.workstreams.some(w => w.id === l.workstreamId)) throw new Error('The linked workstream no longer exists');
+    const w = this.ws(l.workstreamId);
+    if (!w) throw new Error('The linked workstream no longer exists');
+    if (w.archived) throw new Error('The linked workstream is archived in polycli; the user can restore it from the Archived list');
     return l;
   }
   expire() {
@@ -150,7 +154,7 @@ class Cowork extends EventEmitter {
     const filter = String(a.workstream || '').trim().toLowerCase();
     return {
       workstreams: this.m.state.workstreams
-        .filter(w => !filter || w.name.toLowerCase() === filter)
+        .filter(w => !w.archived && (!filter || w.name.toLowerCase() === filter))
         .map(w => ({
           workstream: w.name, folder: tildify(w.folder),
           sessions: this.m.state.sessions.filter(s => s.workstreamId === w.id && (s.open || s.state !== 'closed')).map(s => this.sessionView(s)),
@@ -166,7 +170,7 @@ class Cowork extends EventEmitter {
       return { state: 'muted', note: `The user muted link requests until ${new Date(this.c.mutedUntil).toISOString()}. Try again later.` };
     }
     const want = String(a.workstream || '').trim().toLowerCase();
-    const w = want ? this.m.state.workstreams.find(x => x.name.toLowerCase() === want) : null;
+    const w = want ? this.m.state.workstreams.find(x => !x.archived && x.name.toLowerCase() === want) : null;
     const token = 'lnk_' + crypto.randomBytes(16).toString('hex');
     const l = { id: rid('L', 4), tokenHash: sha(token), title, requested: a.workstream ? String(a.workstream).slice(0, 100) : null, workstreamId: w?.id || null, state: 'pending', createdAt: now(), sessions: [] };
     this.c.links.push(l);
@@ -316,6 +320,7 @@ class Cowork extends EventEmitter {
       if (decision === 'approve') {
         const w = this.ws(workstreamId || l.workstreamId);
         if (!w) throw new Error('Choose a workstream');
+        if (w.archived) throw new Error(`${w.name} is archived; restore it first`);
         Object.assign(l, { state: 'active', workstreamId: w.id, decidedAt: now() });
       } else Object.assign(l, { state: 'rejected', decidedAt: now() });
       this.event('link-decision', { link: l.id, decision });
@@ -432,21 +437,28 @@ class Cowork extends EventEmitter {
     }
   }
 
-  onState(s, from, to) {
+  onState(s, _from, to) {
     const t = this.current(s);
+    // A closed or reattached session has a fresh input box: nothing is left in it.
+    if (to === 'closed' || to === 'starting') this.stuck.delete(s.id);
     if (to === 'closed') {
       for (const x of this.c.turns) if (x.sessionId === s.id && !TERMINAL.has(x.state) && x.state !== 'awaiting-approval') this.finish(x, 'failed', { reason: 'The session ended' });
       return;
     }
-    // Busy → idle without Stop: interrupted (Esc doesn't fire Stop) or polycli missed it.
-    // Not from needs-you: Claude may still be working after a permission prompt.
-    if (t && t.state === 'running' && from === 'busy' && to === 'idle') {
-      setTimeout(() => {
-        if (t.state !== 'running' || s.state !== 'idle') return;
+    // Busy or needs-you → idle without Stop: interrupted (Esc doesn't fire Stop, also at
+    // a permission prompt) or polycli missed it. Settle once the pane has been quiet for
+    // a moment: while Claude still works its spinner keeps drawing.
+    if (t && t.state === 'running' && to === 'idle' && !this.settling.has(t.id)) {
+      this.settling.add(t.id);
+      const check = () => {
+        if (t.state !== 'running' || s.state !== 'idle') return this.settling.delete(t.id);
+        if (now() - (this.m.lastOutput.get(`s:${s.id}`) || 0) < SETTLE_QUIET_MS) return setTimeout(check, SETTLE_QUIET_MS);
+        this.settling.delete(t.id);
         const text = this.lastText(s, t);
         if (text) this.finish(t, 'done', { response: text, responseSource: 'transcript' });
         else this.finish(t, 'failed', { reason: 'The turn ended without a response (interrupted in polycli?)' });
-      }, 1500);
+      };
+      setTimeout(check, SETTLE_QUIET_MS);
     }
     this.wake();
   }

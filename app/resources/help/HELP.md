@@ -11,6 +11,7 @@ A workstream is one piece of work: a name, a color and a main folder. Its Claude
 - The dot after a name shows the most urgent state inside it: **yellow** needs you, **blue** working, **green** idle.
 - Under the active workstream: **+ Claude** starts a session, **+ Shell** opens PowerShell in the folder, **VS Code** opens the folder, **⚙ Settings** edits the name, color, environment variables and deploy command.
 - Closed sessions are kept under **Closed (n)**. Click one to reopen it with its conversation.
+- To put a finished workstream away, use **⚙ Settings → Archive workstream…**. This closes its sessions (conversations are kept) and shells, and moves it to **Archived (n)** at the bottom of the rail. It keeps its settings, variables and Cowork history. Linked Cowork tasks can't use it while it is archived. Click **Restore** to bring it back, then reopen its sessions from **Closed**. polycli waits until Claude is idle before archiving.
 
 ## Claude sessions
 

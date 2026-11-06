@@ -81,6 +81,10 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .chip { border: 1px solid var(--line); background: none; border-radius: 6px; padding: 2px 8px; color: var(--text-dim); font-size: 12px; }
 .chip:hover { color: var(--text); background: var(--bg-hover); }
 .closed-toggle { color: var(--text-faint); font-size: 12px; }
+.ws-archived { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 6px; }
+.ws-arch-row { display: flex; align-items: center; gap: 8px; padding: 4px 8px; color: var(--text-dim); }
+.ws-arch-row .ws-name { font-weight: 500; }
+.ws-chip.archived { opacity: .6; }
 
 .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--text-faint); }
 .st-idle .dot, .dot.st-idle { background: var(--idle); }

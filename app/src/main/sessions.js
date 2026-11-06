@@ -163,6 +163,32 @@ class Manager extends EventEmitter {
     this.changed();
     return w;
   }
+  // Archive: close the workstream's sessions (conversations are kept) and shells, and
+  // hide it from the rail. Restore brings it back; its sessions reopen from Closed.
+  async archiveWorkstream({ id }) {
+    const w = this.ws(id);
+    const working = this.state.sessions.find(s => s.workstreamId === id && ['busy', 'needs-you'].includes(s.state));
+    if (working) throw new Error(`Claude is working in ${working.name}; wait until it is idle.`);
+    for (const s of this.state.sessions.filter(x => x.workstreamId === id && (x.open || this.pty.isLive(`t:${x.id}`)))) await this.closeSession(s.id);
+    for (const h of this.state.shells.filter(x => x.workstreamId === id)) await this.closeShell(h.id);
+    w.archived = now();
+    if (this.state.ui.activeWorkstream === id) this.state.ui.activeWorkstream = this.state.workstreams.find(x => !x.archived)?.id || null;
+    store.event('workstream-archive', { workstream: id });
+    this.changed();
+  }
+  restoreWorkstream({ id }) {
+    const w = this.ws(id);
+    delete w.archived;
+    this.state.ui.activeWorkstream = id;
+    store.event('workstream-restore', { workstream: id });
+    this.changed();
+  }
+  // Archived workstreams start nothing until they are restored.
+  liveWs(id) {
+    const w = this.ws(id);
+    if (w.archived) throw new Error(`${w.name} is archived; restore it first.`);
+    return w;
+  }
   renameWorkstream({ id, name }) {
     const w = this.ws(id);
     w.name = cleanLabel(name, 'Name');
@@ -238,7 +264,7 @@ class Manager extends EventEmitter {
 
   // ---------- Claude sessions ----------
   async newSession({ workstreamId, role, cwd, model = '', effort = '', permissionMode = '' }) {
-    const w = this.ws(workstreamId);
+    const w = this.liveWs(workstreamId);
     if (!MODELS.includes(model)) throw new Error('unknown model');
     if (!EFFORTS.includes(effort)) throw new Error('unknown effort');
     if (!PERMISSION_MODES.includes(permissionMode)) throw new Error('unknown permission mode');
@@ -333,6 +359,7 @@ class Manager extends EventEmitter {
 
   reopenSession(id) {
     const s = this.session(id);
+    this.liveWs(s.workstreamId);
     return this.op(s, async () => {
       s.open = true;
       this.state.ui.activeWorkstream = s.workstreamId;
@@ -346,6 +373,7 @@ class Manager extends EventEmitter {
 
   restartSession(id) {
     const s = this.session(id);
+    this.liveWs(s.workstreamId);
     return this.op(s, async () => {
       if (!s.bgId) return this.launch(s);
       s.open = true;
@@ -375,7 +403,7 @@ class Manager extends EventEmitter {
   // `run` is a command for this first start only (Deploy). The stored args stay a plain
   // shell, so restarting polycli never runs it again.
   newShell({ workstreamId, cwd, run, name }) {
-    const w = this.ws(workstreamId);
+    const w = this.liveWs(workstreamId);
     const h = { id: newId(), workstreamId: w.id, name: name || 'pwsh', cwd: checkedDir(cwd || w.folder), command: 'pwsh.exe', args: ['-NoLogo'], open: true, state: 'running', createdAt: now() };
     this.state.shells.push(h);
     this.state.ui.activeTab = `h:${h.id}`;

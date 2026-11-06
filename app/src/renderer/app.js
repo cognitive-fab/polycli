@@ -10,6 +10,7 @@ const COLORS = ['#7c8cf8', '#4cc38a', '#f2b84b', '#f06a6a', '#5aa9ff', '#c38af2'
 let S = { workstreams: [], sessions: [], shells: [], ui: {}, plan: null };
 const terms = new Map();          // term id → { term, fit, el, ro }
 const showClosed = new Set();      // workstream ids with the Closed list expanded
+let showArchived = false;           // the Archived list at the bottom of the rail is expanded
 
 const STATE_LABEL = {
   starting: 'Starting', idle: 'Idle', busy: 'Working', 'needs-you': 'Needs you', detached: 'Detached',
@@ -31,7 +32,8 @@ function toast(msg, err = false) {
 function copyText(text, label) {
   call('copyText', { text }).then(() => toast(label || `Copied ${text.length} character${text.length === 1 ? '' : 's'}`));
 }
-const activeWs = () => S.workstreams.find(w => w.id === S.ui.activeWorkstream) || null;
+const liveWorkstreams = () => S.workstreams.filter(w => !w.archived);
+const activeWs = () => liveWorkstreams().find(w => w.id === S.ui.activeWorkstream) || null;
 const sessionsOf = wid => S.sessions.filter(s => s.workstreamId === wid);
 const shellsOf = wid => S.shells.filter(h => h.workstreamId === wid);
 const isOpenSession = s => s.open || s.termLive || s.trustLive;
@@ -81,11 +83,13 @@ function render() {
   renderRail();
   renderTabs();
   renderPanes();
-  const none = !S.workstreams.length;
+  const none = !liveWorkstreams().length;
   $('#empty').hidden = !none;
   $('#tabs').hidden = none;
   $('#panes').hidden = none;
-  if (none) $('#empty').innerHTML = `<div><h2>No workstreams yet</h2><p>A workstream groups the Claude sessions, shells and folders of one piece of work.</p><button class="btn primary" id="emptyAdd">Create a workstream</button></div>`;
+  if (none) $('#empty').innerHTML = S.workstreams.length
+    ? `<div><h2>All workstreams are archived</h2><p>Restore one from the Archived list at the bottom of the left rail, or create a new one.</p><button class="btn primary" id="emptyAdd">Create a workstream</button></div>`
+    : `<div><h2>No workstreams yet</h2><p>A workstream groups the Claude sessions, shells and folders of one piece of work.</p><button class="btn primary" id="emptyAdd">Create a workstream</button></div>`;
   if (none) $('#emptyAdd').onclick = newWorkstreamDialog;
 }
 
@@ -111,7 +115,7 @@ function renderCowork() {
   if (!cw || (!cw.pendingLinks.length && !cw.approvals.length)) { bar.hidden = true; bar.innerHTML = ''; return; }
   // Don't redraw while the user is choosing in a select or editing.
   if (bar.contains(document.activeElement) && document.activeElement.matches('select, textarea')) return;
-  const wsOptions = sel => S.workstreams.map(w => `<option value="${w.id}" ${w.id === sel ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
+  const wsOptions = sel => liveWorkstreams().map(w => `<option value="${w.id}" ${w.id === sel ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
   const rows = [];
   const links = cw.pendingLinks;
   links.slice(0, 3).forEach(l => rows.push(`<div class="cw-row" data-cw-link="${l.id}">
@@ -186,7 +190,7 @@ function coworkDialog(ws) {
 }
 
 function renderRail() {
-  const html = S.workstreams.map(w => {
+  const html = liveWorkstreams().map(w => {
     const active = w.id === S.ui.activeWorkstream;
     const st = wsState(w.id);
     let body = '';
@@ -213,7 +217,12 @@ function renderRail() {
       ${body}
     </div>`;
   }).join('');
-  $('#wsList').innerHTML = html;
+  const archived = S.workstreams.filter(w => w.archived);
+  const arch = archived.length ? `<div class="ws-archived">
+      <button class="item closed-toggle" data-archived-toggle="1">${showArchived ? '▾' : '▸'} Archived (${archived.length})</button>
+      ${showArchived ? archived.map(w => `<div class="ws-arch-row"><span class="ws-color" style="background:${esc(w.color)}"></span><span class="ws-name">${esc(w.name)}</span><button class="chip" data-restore-ws="${w.id}" title="Show it in the rail again; its sessions reopen from Closed">Restore</button></div>`).join('') : ''}
+    </div>` : '';
+  $('#wsList').innerHTML = html + arch;
 }
 
 function renderTabs() {
@@ -567,7 +576,7 @@ async function wsSettingsDialog(ws) {
     <div class="field"><span>Global keys this workstream uses (for your own tracking; every session already has them)</span>
       <div class="key-checks">${globals.length ? globals.map(g => `<label class="key-check"><input type="checkbox" name="uses" value="${esc(g.name)}" ${uses.has(g.name) ? 'checked' : ''}><code>${esc(g.name)}</code>${g.scope === 'machine' ? '<small>machine</small>' : ''}</label>`).join('') : '<span class="hint">No key-like Windows variables found.</span>'}</div>
     </div>
-    <div class="modal-actions"><button type="button" class="btn" data-cancel>Cancel</button><button class="btn primary">Save</button></div>`,
+    <div class="modal-actions"><button type="button" class="btn danger" id="wsArchive" style="margin-right:auto" title="Close its sessions and shells and hide it from the rail">Archive workstream…</button><button type="button" class="btn" data-cancel>Cancel</button><button class="btn primary">Save</button></div>`,
   async (fd, f) => {
     const env = [...f.querySelectorAll('.env-row')].map(r => {
       const name = r.querySelector('.env-name').value.trim();
@@ -586,10 +595,23 @@ async function wsSettingsDialog(ws) {
   rows.addEventListener('click', e => { if (e.target.closest('.env-del')) { e.target.closest('.env-row').remove(); warn(); } });
   rows.addEventListener('input', warn);
   warn();
+  form.querySelector('#wsArchive').onclick = () => archiveDialog(ws);
   form.querySelectorAll('[data-color]').forEach(b => b.onclick = () => {
     color = b.dataset.color;
     form.querySelectorAll('.swatch').forEach(x => x.classList.toggle('sel', x === b));
   });
+}
+
+function archiveDialog(ws) {
+  const open = sessionsOf(ws.id).filter(isOpenSession), shells = shellsOf(ws.id);
+  const working = open.filter(s => ['busy', 'needs-you'].includes(s.state));
+  const what = [open.length && `${open.length} Claude session${open.length === 1 ? '' : 's'}`, shells.length && `${shells.length} shell${shells.length === 1 ? '' : 's'}`].filter(Boolean).join(' and ');
+  modal(`<h3>Archive ${esc(ws.name)}?</h3>
+    <p>${what ? `This closes its ${what}.${open.length ? ' Claude conversations are kept and can be reopened after you restore the workstream.' : ''}${shells.length ? ' Shells are closed for good.' : ''}` : 'Nothing is open in it.'}</p>
+    <p class="hint">The workstream moves to the Archived list at the bottom of the left rail, with its settings, variables and Cowork history. Linked Cowork tasks can't use it until you restore it.</p>
+    ${working.length ? `<p class="warn-text">Claude is working in ${working.map(s => esc(s.name)).join(', ')}. Wait until it is idle.</p>` : ''}
+    <div class="modal-actions"><button type="button" class="btn" data-cancel>Cancel</button><button class="btn primary">Archive</button></div>`,
+  async () => { await call('archiveWorkstream', { id: ws.id }); toast(`${ws.name} archived`); });
 }
 
 // Global keys: the key-like variables saved in Windows (names only), which workstreams
@@ -598,7 +620,7 @@ async function keysDialog() {
   const globals = await call('globalKeys');
   const usedBy = n => S.workstreams.filter(w => (w.uses || []).includes(n));
   const setIn = n => S.workstreams.filter(w => (w.env || []).some(e => e.name.toUpperCase() === n.toUpperCase()));
-  const chips = ws => ws.map(w => `<span class="ws-chip"><span class="ws-color" style="background:${esc(w.color)}"></span>${esc(w.name)}</span>`).join('');
+  const chips = ws => ws.map(w => `<span class="ws-chip ${w.archived ? 'archived' : ''}" ${w.archived ? 'title="Archived"' : ''}><span class="ws-color" style="background:${esc(w.color)}"></span>${esc(w.name)}${w.archived ? ' <small>archived</small>' : ''}</span>`).join('');
   const local = S.workstreams.flatMap(w => (w.env || []).map(e => ({ w, name: e.name }))).filter(x => !globals.some(g => g.name.toUpperCase() === x.name.toUpperCase()));
   const form = modal(`<h3>Keys</h3>
     <div class="hint" style="margin-bottom:10px">Key-like variables saved in Windows (names only). Every Claude session and shell gets them. Mark which workstreams use each one in the workstream's ⚙ Settings.</div>
@@ -707,7 +729,7 @@ function openVSCode(args, e) {
 document.addEventListener('click', async e => {
   const cwEl = e.target.closest('[data-cw]');
   if (cwEl) return coworkClick(cwEl);
-  const el = e.target.closest('[data-close],[data-tab],[data-select-ws],[data-act],[data-reopen],[data-closed]');
+  const el = e.target.closest('[data-close],[data-tab],[data-select-ws],[data-act],[data-reopen],[data-closed],[data-archived-toggle],[data-restore-ws]');
   if (!el) {
     if (!e.target.closest('.inbox-menu')) $('#inboxMenu').hidden = true;
     return;
@@ -729,6 +751,8 @@ document.addEventListener('click', async e => {
     return;
   }
   if (el.dataset.selectWs) { await call('setActive', { id: el.dataset.selectWs }); return; }
+  if (el.dataset.archivedToggle) { showArchived = !showArchived; render(); return; }
+  if (el.dataset.restoreWs) { await call('restoreWorkstream', { id: el.dataset.restoreWs }); return; }
   if (el.dataset.reopen) { await call('reopenSession', { id: el.dataset.reopen }); return; }
   if (el.dataset.closed) {
     showClosed.has(el.dataset.closed) ? showClosed.delete(el.dataset.closed) : showClosed.add(el.dataset.closed);

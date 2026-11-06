@@ -40,6 +40,7 @@ Workstream ──< CliSession ──< Pane
 ```
 
 - **Workstream**: a name, color, icon, one-line goal, folders, and an archived flag. polycli owns it.
+  - **Archive** (built): refused while a session is busy or needs you. It closes the sessions (`claude stop`, conversations kept) and shells, sets `archived`, and hides the workstream under *Archived* in the rail. New, reopened and restarted sessions are refused until **Restore**. The Cowork bridge doesn't list it, can't link to it, and tells linked tasks it is archived.
 - **CliSession**: one Claude Code conversation that polycli launched.
   - Fields: `bgId` (parsed from the `--bg` output at launch), `sessionId` (full UUID, learned from the first `SessionStart` hook or `agents --json`; its first 8 hex digits are the `bgId`), `name`, `cwd`, `role`, `state`, header info (§5), bridge policy (§7.4).
   - It is a Claude **background session** (`claude --bg`). It lives under Claude's own supervisor, not under polycli.

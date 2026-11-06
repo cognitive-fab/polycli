@@ -224,7 +224,30 @@ async function runUi({ app, win, manager }) {
     await sleep(800);
     await shot('keys');
     report.keyRows = await wc.executeJavaScript(`document.querySelectorAll('.keys-table tbody tr').length`);
-    report.ok = report.settingsRows === 3 && /ANTHROPIC_API_KEY/.test(report.warning) && report.keyRows > 0;
+    await wc.executeJavaScript(`document.querySelector('[data-cancel]').click()`);
+    // Archive from Settings, then restore from the Archived list.
+    const keep = manager.createWorkstream({ name: 'ui-keep', folder: FOLDER });
+    manager.setActive(ws.id);
+    manager.newShell({ workstreamId: ws.id });
+    await sleep(800);
+    await wc.executeJavaScript(`document.querySelector('[data-act="wsSettings"]').click()`);
+    await sleep(800);
+    await wc.executeJavaScript(`document.querySelector('#wsArchive').click()`);
+    await sleep(500);
+    report.archiveText = await wc.executeJavaScript(`document.querySelector('#modal p').textContent`);
+    await wc.executeJavaScript(`document.querySelector('#modal .modal-actions .primary').click()`);
+    await waitFor(() => manager.ws(ws.id).archived, 10000, 'archived');
+    await sleep(600);
+    await wc.executeJavaScript(`document.querySelector('[data-archived-toggle]').click()`);
+    await shot('archived');
+    report.rail = await wc.executeJavaScript(`[...document.querySelectorAll('#wsList .ws-name')].map(e => e.textContent)`);
+    report.archivedShells = manager.state.shells.filter(h => h.workstreamId === ws.id).length;
+    report.activeAfterArchive = manager.state.ui.activeWorkstream === keep.id;
+    await wc.executeJavaScript(`document.querySelector('[data-restore-ws]').click()`);
+    await waitFor(() => !manager.ws(ws.id).archived, 10000, 'restored');
+    report.ok = report.settingsRows === 3 && /ANTHROPIC_API_KEY/.test(report.warning) && report.keyRows > 0
+      && /1 shell/.test(report.archiveText) && report.archivedShells === 0 && report.activeAfterArchive
+      && report.rail.join() === 'ui-keep,ui-test';
   } catch (e) {
     report.ok = false;
     report.error = String(e.stack || e);
