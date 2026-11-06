@@ -12,6 +12,7 @@ const paths = {
   data: path.join(HOME, 'data'),          // state.json, events.jsonl
   run: path.join(HOME, 'run'),            // per-session --settings files
   bin: path.join(HOME, 'bin'),            // hook/status helpers, copied out of the app
+  pastes: path.join(HOME, 'pastes'),      // images pasted into a pane, saved so their path can be typed
   claudeJson: path.join(os.homedir(), '.claude.json'),
   // Pipe name without the \\.\pipe\ prefix: it is passed on hook command lines, where
   // backslashes would be mangled by the shell.
@@ -19,7 +20,7 @@ const paths = {
 };
 
 function ensureDirs() {
-  for (const d of [paths.data, paths.run, paths.bin]) fs.mkdirSync(d, { recursive: true });
+  for (const d of [paths.data, paths.run, paths.bin, paths.pastes]) fs.mkdirSync(d, { recursive: true });
 }
 
 // The same folder can appear as C:\a\b, c:/a/b or C:\a\b\ ; compare on one form.

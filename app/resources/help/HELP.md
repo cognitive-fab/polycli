@@ -59,6 +59,7 @@ When Claude needs a decision (a permission prompt, for example), the session tur
 - **Drag** to select text, then **Ctrl+C** to copy. With nothing selected, Ctrl+C goes to Claude as usual.
 - **Ctrl+Shift+C** always copies and never reaches Claude.
 - **Ctrl+V** pastes. The mouse wheel scrolls Claude's conversation.
+- **Images and files go in as paths.** Paste a screenshot or a copied image with Ctrl+V: polycli saves it as a PNG under `%APPDATA%\polycli\pastes` and types its path, and Claude attaches it as *[Image #1]*. Files copied in Explorer (Ctrl+C on a file) paste as their paths, and so do files dragged onto a pane. Paths with spaces are quoted. When the clipboard also has text, the text is pasted. Saved pastes are deleted after 7 days.
 
 ## Continue in another terminal
 

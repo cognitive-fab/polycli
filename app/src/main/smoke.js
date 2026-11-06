@@ -204,6 +204,78 @@ async function runClip({ app, win, manager }) {
   app.exit(report.ok ? 0 : 1);
 }
 
+// Image paste: a screenshot-like image on the clipboard (no file) is saved by polycli
+// and its path typed into the prompt, where Claude attaches it. Also checks how Claude
+// takes two pasted paths, one of them quoted (a folder with a space), as Explorer gives.
+async function runImage({ app, win, manager }) {
+  const { clipboard, nativeImage, ClipboardItem } = require('electron');
+  const report = { phase: 'image' };
+  const wc = win.webContents;
+  const savedText = await clipboard.readText().catch(() => '');
+  let sid = null;
+  const plain = () => manager.pty.scrollback(`s:${sid}`).replace(/\x1b\[[0-9;?<>=]*[ -/]*[@-~]/g, '').replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '');
+  const solid = (w, h, [r, g, b]) => { const buf = Buffer.alloc(w * h * 4); for (let i = 0; i < w * h; i++) buf.set([b, g, r, 255], i * 4); return nativeImage.createFromBitmap(buf, { width: w, height: h }); };
+  try {
+    const ws = manager.createWorkstream({ name: 'image-test', folder: FOLDER });
+    const s = await manager.newSession({ workstreamId: ws.id, role: 'img', model: 'haiku' });
+    sid = s.id;
+    await waitFor(() => manager.session(sid).state === 'idle' && manager.pty.isLive(`s:${sid}`), 60000, 'idle');
+    await sleep(2000);
+    win.show(); win.focus(); wc.focus();
+    manager.setUi({ activeTab: `s:${sid}` });
+    for (let i = 0; i < 40; i++) { if (await wc.executeJavaScript(`!!document.querySelector('[data-term="s:${sid}"] .xterm-screen')?.offsetParent`)) break; await sleep(250); }
+    await wc.executeJavaScript(`document.querySelector('[data-term="s:${sid}"] textarea').focus()`);
+
+    await clipboard.write([new ClipboardItem({ 'image/png': new Blob([solid(96, 64, [220, 30, 30]).toPNG()], { type: 'image/png' }) })]);
+    const before = fs.readdirSync(require('./paths').paths.pastes).length;
+    const mark = plain().length;
+    wc.paste();
+    await waitFor(() => /\[Image\s*#1\]/.test(plain().slice(mark)) || /paste-[\w-]+\.png/.test(plain().slice(mark)), 15000, 'image pasted').catch(() => {});
+    await sleep(1500);
+    const shown = plain().slice(mark);
+    report.saved = fs.readdirSync(require('./paths').paths.pastes).length - before;
+    report.attached = /\[Image\s*#1\]/.test(shown);
+    report.pathShown = /paste-[\w-]+\.png/.test(shown);
+    fs.writeFileSync(path.join(OUT, 'image-pasted.png'), (await wc.capturePage()).toPNG());
+    console.log('SMOKE image', JSON.stringify({ saved: report.saved, attached: report.attached, pathShown: report.pathShown }));
+
+    // Ask about it: the answer shows Claude saw the image.
+    manager.write(`s:${sid}`, ' What is the main color of this image? Answer with one word.');
+    await sleep(800);
+    manager.write(`s:${sid}`, '\r');
+    await waitFor(() => manager.session(sid).state === 'busy', 15000, 'busy').catch(() => {});
+    await waitFor(() => manager.session(sid).state === 'idle', 90000, 'answer');
+    report.answer = manager.session(sid).lastMessage;
+    report.prompt = manager.session(sid).lastPrompt;   // as Claude received it (UserPromptSubmit)
+    console.log('SMOKE image answer', JSON.stringify(report.answer));
+
+    // Two paths in one paste, the first quoted.
+    const dir = path.join(require('./paths').paths.pastes, 'two words');
+    fs.mkdirSync(dir, { recursive: true });
+    const a = path.join(dir, 'blue.png'), b = path.join(require('./paths').paths.pastes, 'green-smoke.png');
+    fs.writeFileSync(a, solid(64, 64, [30, 60, 220]).toPNG());
+    fs.writeFileSync(b, solid(64, 64, [30, 200, 60]).toPNG());
+    // Stop hooks can still be running after Stop: wait for the pane to go quiet.
+    await waitFor(() => Date.now() - (manager.lastOutput.get(`s:${sid}`) || 0) > 4000, 60000, 'quiet').catch(() => {});
+    const mark2 = plain().length;
+    await wc.executeJavaScript(`window.__polycli.terms.get('s:${sid}').term.paste(${JSON.stringify(`"${a}" ${b}`)})`);
+    await waitFor(() => /\[Image\s*#3\]/.test(plain().slice(mark2)), 15000, 'two images').catch(() => {});
+    await sleep(500);
+    const shown2 = plain().slice(mark2);
+    report.two = { image1: /\[Image\s*#2\]/.test(shown2), image2: /\[Image\s*#3\]/.test(shown2), tail: shown2.slice(-300) };
+    fs.writeFileSync(path.join(OUT, 'image-two.png'), (await wc.capturePage()).toPNG());
+    console.log('SMOKE two paths', JSON.stringify({ image1: report.two.image1, image2: report.two.image2 }));
+    report.ok = report.saved === 1 && report.attached && /\[Image #1\]/.test(report.prompt || '') && /red/i.test(report.answer || '') && report.two.image1 && report.two.image2;
+  } catch (e) {
+    report.ok = false;
+    report.error = String(e.stack || e);
+  }
+  try { await clipboard.writeText(savedText); } catch {}
+  if (sid) { try { await manager.deleteSession(sid); } catch {} }
+  fs.writeFileSync(path.join(OUT, 'image.json'), JSON.stringify(report, null, 2));
+  app.exit(report.ok ? 0 : 1);
+}
+
 // Screenshots of the workstream settings and Keys dialogs (no Claude session needed).
 async function runUi({ app, win, manager }) {
   const report = { phase: 'ui' };
@@ -459,6 +531,7 @@ async function run(ctx) {
   if (process.env.POLYCLI_SMOKE === 'git') return runGit(ctx);
   if (process.env.POLYCLI_SMOKE === 'ui') return runUi(ctx);
   if (process.env.POLYCLI_SMOKE === 'clip') return runClip(ctx);
+  if (process.env.POLYCLI_SMOKE === 'image') return runImage(ctx);
   if (process.env.POLYCLI_SMOKE === 'needs') return runNeeds(ctx);
   if (process.env.POLYCLI_SMOKE === 'launch') return runLaunch(ctx);
   if (process.env.POLYCLI_SMOKE === 'verify') return runVerify(ctx);

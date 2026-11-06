@@ -46,6 +46,40 @@ function pushState() {
   if (win && !win.isDestroyed()) win.setTitle(`${waiting ? `(${waiting}) ` : ''}${ws ? ws.name + ' — ' : ''}polycli`);
 }
 
+// An image pasted with no file behind it (a screenshot, an image copied from a page):
+// save it under %APPDATA%\polycli\pastes so its path can be typed into the pane, where
+// Claude attaches it. The bytes come from the paste event; only the image formats
+// Claude reads are kept. Pastes older than 7 days are removed at startup.
+const PASTE_KEEP_MS = 7 * 24 * 3600 * 1000;
+const PASTE_MAX = 32 << 20;
+function imageExt(b) {
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'png';
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'jpg';
+  if (b.subarray(0, 4).toString('latin1') === 'GIF8') return 'gif';
+  if (b.subarray(0, 4).toString('latin1') === 'RIFF' && b.subarray(8, 12).toString('latin1') === 'WEBP') return 'webp';
+  return null;
+}
+function savePastedImage({ data } = {}) {
+  if (!(data instanceof Uint8Array) || !data.length || data.length > PASTE_MAX) throw new Error('The pasted image is empty or larger than 32 MB');
+  const b = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  const ext = imageExt(b);
+  if (!ext) throw new Error('Only PNG, JPEG, GIF and WebP images can be pasted');
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+  const file = path.join(paths.pastes, `paste-${stamp}-${require('crypto').randomBytes(2).toString('hex')}.${ext}`);
+  require('fs').writeFileSync(file, b);
+  return file;
+}
+function prunePastes() {
+  const fs = require('fs');
+  try {
+    for (const f of fs.readdirSync(paths.pastes)) {
+      if (!/^paste-[\w-]+\.(png|jpg|gif|webp)$/.test(f)) continue;
+      const p = path.join(paths.pastes, f);
+      if (Date.now() - fs.statSync(p).mtimeMs > PASTE_KEEP_MS) fs.rmSync(p, { force: true });
+    }
+  } catch {}
+}
+
 // Resolve what to open in VS Code from polycli's own records, never from a raw path.
 function vscodeTarget({ sessionId, workstreamId, shellId, doc }) {
   if (sessionId) {
@@ -108,6 +142,7 @@ const OPS = {
   scrollback: a => manager.pty.scrollback(String(a.term)),
   openVSCode: async a => { await vscode.open(vscodeTarget(a), { mode: a.mode === 'new' ? 'new' : 'reuse', root: !!a.root }); },
   copyText: a => clipboard.writeText(String(a.text ?? '').slice(0, 1 << 20)),
+  savePastedImage: a => savePastedImage(a),
   pickFolder: async a => {
     const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'], defaultPath: a && a.defaultPath });
     return r.canceled ? null : r.filePaths[0];
@@ -128,6 +163,7 @@ function wireIpc() {
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
   ensureDirs();
+  prunePastes();
   installHelpers();
 
   const pty = new PtyClient();

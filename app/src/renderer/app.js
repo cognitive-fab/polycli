@@ -409,6 +409,7 @@ function mountTerm(host, termId) {
     return true;
   });
   if (!termId.startsWith('h:')) keepSelectionLocal(term);
+  pasteFilesAsPaths(host, term);
   // OSC 52: a program in the terminal sets the clipboard. Writes only; requests to
   // read the clipboard are ignored, and so is the scrollback replayed on mount.
   term.parser.registerOscHandler(52, data => {
@@ -431,6 +432,37 @@ function mountTerm(host, termId) {
     fitTerm(t);
   });
   t.id = termId;
+}
+
+// Images and files go in as paths, the way a terminal does on drop: Claude attaches a
+// pasted image path as [Image #n]. Files copied or dropped from Explorer give their own
+// paths; an image with no file (a screenshot) is saved by polycli first. Text on the
+// clipboard always wins, and pastes as usual.
+function pasteFilesAsPaths(host, term) {
+  const quote = p => (/\s/.test(p) ? `"${p}"` : p);
+  const typePaths = list => { if (list.length) { term.paste(list.map(quote).join(' ')); term.focus(); } };
+  host.addEventListener('paste', async e => {
+    const dt = e.clipboardData;
+    if (!dt || dt.getData('text/plain')) return;
+    // Read everything now: the clipboard data is gone once the event returns.
+    const files = [...dt.files];
+    const paths = files.map(f => api.filePath(f)).filter(Boolean);
+    const image = [...dt.items].find(i => i.kind === 'file' && i.type.startsWith('image/'))?.getAsFile();
+    if (!paths.length && !image) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (!paths.length) {
+      try { paths.push(await call('savePastedImage', { data: new Uint8Array(await image.arrayBuffer()) })); } catch { return; }
+    }
+    typePaths(paths);
+  }, true);
+  host.addEventListener('dragover', e => { if (e.dataTransfer?.types.includes('Files')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
+  host.addEventListener('drop', e => {
+    const files = [...(e.dataTransfer?.files || [])];
+    if (!files.length) return;
+    e.preventDefault();
+    typePaths(files.map(f => api.filePath(f)).filter(Boolean));
+  });
 }
 
 // Claude Code turns on mouse reporting. xterm then hands every drag to Claude instead
