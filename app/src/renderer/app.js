@@ -112,7 +112,7 @@ const fmtTok = n => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 
 const fmtHours = sec => (sec / 3600).toFixed(2);
 
 // Topbar: this week's Claude generation time and output tokens for the selected
-// folder (resets Monday 07:00) and, on a billable folder, my time this month.
+// workstream (resets Monday 07:00) and, on a billable one, my time this month.
 function renderBilling() {
   const b = S.billing, btn = $('#billBtn');
   btn.hidden = !b;
@@ -129,16 +129,16 @@ function renderBilling() {
 async function billingDialog() {
   const months = await call('billingHistory');
   const rows = months.map((M, i) => `<details ${i === 0 ? 'open' : ''}><summary><b>${esc(M.month)}</b><span class="bill-cols"><span>${fmtHours(M.total.bill)} h billable</span><span>${fmtDur(M.total.gen)} Claude</span><span>↓ ${fmtTok(M.total.out)}</span></span></summary>
-      <table class="keys-table"><thead><tr><th>Folder</th><th>Billable</th><th>Claude</th><th>Output tokens</th></tr></thead><tbody>
+      <table class="keys-table"><thead><tr><th>Workstream</th><th>Billable</th><th>Claude</th><th>Output tokens</th></tr></thead><tbody>
       ${M.rows.map(R => `<tr><td>${esc(R.label)}${R.billable ? '' : ' <small>not billable</small>'}</td><td>${fmtHours(R.bill)} h</td><td>${fmtDur(R.gen)}</td><td>${R.out.toLocaleString()}</td></tr>
         ${R.days.map(D => `<tr class="bill-day"><td>${esc(D.day)}</td><td>${fmtHours(D.bill)} h</td><td>${fmtDur(D.gen)}</td><td>${D.out.toLocaleString()}</td></tr>`).join('')}`).join('')}
       </tbody></table></details>`).join('');
   const form = modal(`<h3>Billing history</h3>
-    <p class="hint">Billable = the time you worked on a billable folder: its workstream selected, polycli focused, you not idle for 5 minutes, and no Claude session of the workstream generating. Claude time and output tokens come from the session transcripts. Mark a folder billable in its workstream's settings.</p>
+    <p class="hint">Billable = the time you worked on a billable workstream: it selected, polycli focused, you not idle for 5 minutes, and none of its Claude sessions generating. Claude time and output tokens come from the session transcripts. Mark a workstream billable in its settings.</p>
     <div class="bill-list">${rows || '<p class="hint">Nothing recorded yet.</p>'}</div>
     <div class="modal-actions"><button type="button" class="btn" id="billCsv" style="margin-right:auto">Copy CSV</button><button type="button" class="btn" data-cancel>Close</button></div>`, async () => {}, { wide: true });
   form.querySelector('#billCsv').onclick = () => {
-    const csv = ['month,day,folder,billable_hours,claude_seconds,output_tokens'];
+    const csv = ['month,day,workstream,billable_hours,claude_seconds,output_tokens'];
     for (const M of months) for (const R of M.rows) for (const D of R.days) csv.push([M.month, D.day, `"${R.label.replace(/"/g, '""')}"`, fmtHours(D.bill), Math.round(D.gen), D.out].join(','));
     copyText(csv.join('\n'), 'Copied billing CSV');
   };
@@ -925,7 +925,7 @@ async function wsSettingsDialog(ws) {
       <label class="field"><span>Prompts from linked Cowork tasks</span><select name="coworkSend"><option value="ask" ${(ws.coworkSend || 'ask') === 'ask' ? 'selected' : ''}>Ask me each time</option><option value="allow" ${ws.coworkSend === 'allow' ? 'selected' : ''}>Send without asking</option></select></label>
     </div>
     <label class="field"><span>Deploy command (runs in a new shell tab from the Deploy button; leave empty to use a package.json "deploy" script if there is one)</span><input name="deploy" value="${esc(ws.deploy || '')}" placeholder="npm run deploy" spellcheck="false" style="font-family:var(--mono)"></label>
-    <label class="check-row"><input type="checkbox" name="billable" ${ws.billable ? 'checked' : ''}><span>Billable folder (${esc(ws.folderShort || ws.folder)}): count my time while this workstream is selected and polycli is focused, minus Claude's generation time. Applies to every workstream on this folder.</span></label>
+    <label class="check-row"><input type="checkbox" name="billable" ${ws.billable ? 'checked' : ''}><span>Billable workstream: count my time while it is selected and polycli is focused, minus Claude's generation time. Monthly totals are in the top-right pill.</span></label>
     <div class="field"><span>Global keys this workstream uses (for your own tracking; every session already has them)</span>
       <div class="key-checks">${globals.length ? globals.map(g => `<label class="key-check"><input type="checkbox" name="uses" value="${esc(g.name)}" ${uses.has(g.name) ? 'checked' : ''}><code>${esc(g.name)}</code>${g.scope === 'machine' ? '<small>machine</small>' : ''}</label>`).join('') : '<span class="hint">No key-like Windows variables found.</span>'}</div>
     </div>

@@ -1,17 +1,15 @@
 'use strict';
-// Time and tokens per project folder.
+// Time and tokens per workstream.
 //
 // Two counters, both kept in hourly buckets (local time) in state.billing so that a
 // week (Monday 07:00 local) or a month is a sum of buckets:
-//   bill: seconds *I* worked on a billable folder: its workstream is the selected one,
+//   bill: seconds *I* worked on a billable workstream: it is the selected one,
 //         polycli is the focused window, I am not idle, and no Claude session of the
 //         workstream is generating (generation time is not mine to bill).
 //   gen / out: Claude's generation time (turn_duration) and output tokens, read from
 //         the session transcripts. Transcripts are read incrementally and only
 //         appended to, so numbers survive Claude pruning old transcripts.
 const fs = require('fs');
-const path = require('path');
-const { normPath } = require('./paths');
 
 const TICK_MS = 5000;
 const SCAN_MS = 20000;
@@ -42,7 +40,7 @@ class Billing {
   }
   get b() {
     const s = this.m.state;
-    if (!s.billing) s.billing = { folders: {}, hours: {}, scans: {} };
+    if (!s.billing) s.billing = { workstreams: {}, hours: {}, scans: {} };
     return s.billing;
   }
   start() {
@@ -52,17 +50,19 @@ class Billing {
   }
   stop() { clearInterval(this.tickTimer); clearInterval(this.scanTimer); this.scan(); }
 
-  folder(key, w) {
-    const f = this.b.folders[key] || (this.b.folders[key] = { label: path.basename(w.folder), billable: false });
+  // Keyed by workstream id; the name is kept so history still reads after a rename or removal.
+  entry(w) {
+    const f = this.b.workstreams[w.id] || (this.b.workstreams[w.id] = { label: w.name, billable: false });
+    f.label = w.name;
     return f;
   }
   bucket(key, hk) {
     const h = this.b.hours[key] || (this.b.hours[key] = {});
     return h[hk] || (h[hk] = { bill: 0, gen: 0, out: 0 });
   }
-  isBillable(folder) { return !!this.b.folders[normPath(folder)]?.billable; }
+  isBillable(id) { return !!this.b.workstreams[id]?.billable; }
   setBillable(w, on) {
-    this.folder(normPath(w.folder), w).billable = !!on;
+    this.entry(w).billable = !!on;
     this.m.changed();
   }
 
@@ -77,9 +77,9 @@ class Billing {
     const w = this.activeWs();
     const was = this.running;
     this.running = false;
-    if (w && this.b.folders[normPath(w.folder)]?.billable && this.isActive() && this.idleSeconds() < IDLE_LIMIT_S
-      && !this.m.state.sessions.some(s => s.state === 'busy' && this.m.state.workstreams.some(x => x.id === s.workstreamId && normPath(x.folder) === normPath(w.folder)))) {
-      this.bucket(normPath(w.folder), hourKey(new Date(now))).bill += dt;
+    if (w && this.isBillable(w.id) && this.isActive() && this.idleSeconds() < IDLE_LIMIT_S
+      && !this.m.state.sessions.some(s => s.workstreamId === w.id && s.state === 'busy')) {
+      this.bucket(w.id, hourKey(new Date(now))).bill += dt;
       this.running = true;
     }
     if (this.running || was) this.m.changed();
@@ -95,7 +95,7 @@ class Billing {
     if (changed) this.m.changed();
   }
   scanOne(p, w) {
-    const key = normPath(w.folder);
+    const key = w.id;
     const st = fs.statSync(p, { throwIfNoEntry: false });
     if (!st) return false;
     const sc = this.b.scans[p] || (this.b.scans[p] = { offset: 0, lastId: null, lastTok: 0, key });
@@ -108,7 +108,7 @@ class Billing {
     const nl = buf.lastIndexOf(10);
     if (nl < 0) return false;          // no complete line yet (or one longer than a chunk)
     sc.offset += nl + 1;
-    this.folder(sc.key, w);
+    this.entry(w);
     let any = false;
     for (const line of buf.subarray(0, nl + 1).toString('utf8').split('\n')) {
       if (!line || !(line.includes('"usage"') || line.includes('turn_duration'))) continue;
@@ -136,28 +136,28 @@ class Billing {
     }
     return t;
   }
-  // For the topbar: the selected workstream's folder.
+  // For the topbar: the selected workstream.
   summary() {
     const w = this.activeWs();
     if (!w) return null;
-    const key = normPath(w.folder), f = this.b.folders[key];
+    const key = w.id, f = this.entry(w);
     const now = new Date(), ws = weekStart(now), hk = hourKey(now);
     const month = this.sum(key, k => k.startsWith(hk.slice(0, 7)));
     const today = this.sum(key, k => k.startsWith(hk.slice(0, 10)));
     const week = this.sum(key, k => hourStart(k) >= ws);
     return {
-      label: f?.label || path.basename(w.folder), billable: !!f?.billable, running: this.running,
+      label: w.name, billable: f.billable, running: this.running,
       todaySec: today.bill, monthSec: month.bill, weekGenSec: week.gen, weekOut: week.out, weekBillSec: week.bill, weekStart: ws.toISOString(),
     };
   }
   history() {
     const months = new Map();
     for (const [key, hours] of Object.entries(this.b.hours)) {
-      const label = this.b.folders[key]?.label || path.basename(key);
+      const label = this.b.workstreams[key]?.label || 'removed workstream';
       for (const [hk, v] of Object.entries(hours)) {
         const mo = hk.slice(0, 7), day = hk.slice(0, 10);
         const M = months.get(mo) || months.set(mo, { month: mo, total: { bill: 0, gen: 0, out: 0 }, rows: new Map() }).get(mo);
-        const R = M.rows.get(key) || M.rows.set(key, { key, label, billable: !!this.b.folders[key]?.billable, bill: 0, gen: 0, out: 0, days: new Map() }).get(key);
+        const R = M.rows.get(key) || M.rows.set(key, { key, label, billable: !!this.b.workstreams[key]?.billable, bill: 0, gen: 0, out: 0, days: new Map() }).get(key);
         const D = R.days.get(day) || R.days.set(day, { day, bill: 0, gen: 0, out: 0 }).get(day);
         for (const t of [M.total, R, D]) { t.bill += v.bill; t.gen += v.gen; t.out += v.out; }
       }

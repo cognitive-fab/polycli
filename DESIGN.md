@@ -324,7 +324,7 @@ Per session and rolled up per workstream, an **Artifacts** panel lists:
 
 ## 9b. Time and tokens (`main/billing.js`)
 
-Per folder (not per workstream), in hourly local buckets in `state.billing`: `bill` (my seconds), `gen` (Claude's `turn_duration`) and `out` (output tokens). Transcripts are read incrementally by byte offset (a message written once per content block is counted once, by id), so restarts never double count and history survives Claude pruning transcripts. `bill` ticks every 5 s while the folder is billable, its workstream is selected, the window is focused, system idle is under 5 minutes and no session of the workstream is `busy`. Week = since Monday 07:00 local. Still open: attributing time per workstream or Cowork task, and manual adjustments.
+Per workstream (keyed by id, name kept for history), in hourly local buckets in `state.billing`: `bill` (my seconds), `gen` (Claude's `turn_duration`) and `out` (output tokens). Transcripts are read incrementally by byte offset (a message written once per content block is counted once, by id), so restarts never double count and history survives Claude pruning transcripts. `bill` ticks every 5 s while the workstream is billable and selected, the window is focused, system idle is under 5 minutes and no session of the workstream is `busy`. Week = since Monday 07:00 local. Still open: attributing time per Cowork task, and manual adjustments.
 
 ## 10. Architecture (Electron)
 

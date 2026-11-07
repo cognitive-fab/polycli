@@ -69,9 +69,9 @@ Above the tabs, **Main**, **Architecture** and **Docs** switch what the workstre
 
 ## Time and tokens
 
-The pill at the top right shows, for the selected workstream's folder, what Claude did this week: generation time and output tokens, like `(5m 38s · ↓ 40.7k tokens)`. The week resets Monday at 7:00.
+The pill at the top right shows, for the selected workstream, what Claude did this week: generation time and output tokens, like `(5m 38s · ↓ 40.7k tokens)`. The week resets Monday at 7:00.
 
-Tick **Billable folder** in a workstream's settings to also count your own time on it: the workstream is selected, polycli is the focused window, you haven't been idle for 5 minutes, and none of its Claude sessions is generating. The pill then starts with `⏱` and this month's total, and glows while counting. Click the pill for monthly totals per folder, with days underneath, and **Copy CSV**.
+Tick **Billable workstream** in its settings to also count your own time on it: the workstream is selected, polycli is the focused window, you haven't been idle for 5 minutes, and none of its Claude sessions is generating. The pill then starts with `⏱` and this month's total, and glows while counting. Click the pill for monthly totals per workstream, with days underneath, and **Copy CSV**.
 
 ## Copy and paste
 
