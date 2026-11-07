@@ -15,7 +15,10 @@ function resolveRel(baseDir, href) {
   const parts = href.startsWith('/') ? [] : baseDir.split('/');
   for (const p of href.split(/[?#]/)[0].split('/')) {
     if (!p || p === '.') continue;
-    if (p === '..') parts.pop(); else parts.push(decodeURIComponent(p));
+    if (p === '..') { parts.pop(); continue; }
+    let seg = p;
+    try { seg = decodeURIComponent(p); } catch {}   // a stray % in a name stays literal
+    parts.push(seg);
   }
   const rel = parts.join('/');
   return /^(docs|architecture)(\/|$)/.test(rel) ? rel : null;
@@ -275,6 +278,9 @@ async function openFile(rel, origin) {
   });
   const save = async () => {
     if (!c.dirty) return;
+    try { await doSave(); } catch {}   // call() has already shown the error
+  };
+  const doSave = async () => {
     let r = await c.call('docWrite', { workstreamId: ws.id, rel, text: ta.value, mtime });
     if (r.conflict) {
       if (!confirm('This file changed on disk since you opened it (an editor or Claude wrote to it). Overwrite it with your version?')) return;

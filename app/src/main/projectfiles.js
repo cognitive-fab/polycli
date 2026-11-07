@@ -96,7 +96,7 @@ function listArchitecture(folder) {
     let names;
     try { names = fs.readdirSync(dir); } catch { continue; }
     const diagrams = [];
-    for (const n of names.filter(x => /\.html?$/i.test(x) && !/\.visual-check\./i.test(x) && !SKIP.test(x)).sort()) {
+    for (const n of names.filter(x => /\.architecture\.html?$/i.test(x) && !/\.visual-check\./i.test(x) && !SKIP.test(x)).sort()) {
       const base = n.replace(/\.html?$/i, '');
       const j = readJson(path.join(dir, `${base}.json`));
       const views = j?.meta?.views || [];
