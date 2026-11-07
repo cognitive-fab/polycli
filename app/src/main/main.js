@@ -1,6 +1,6 @@
 'use strict';
 const path = require('path');
-const { app, BrowserWindow, ipcMain, dialog, Notification, Menu, clipboard, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Notification, Menu, clipboard, shell, protocol, powerMonitor } = require('electron');
 const { paths, ensureDirs } = require('./paths');
 const { installHelpers, HookServer } = require('./hooks');
 const { PtyClient } = require('./ptyclient');
@@ -8,7 +8,12 @@ const { Manager } = require('./sessions');
 const { Cowork } = require('./cowork');
 const { BridgeServer, bridgePipeName } = require('./bridge');
 const vscode = require('./vscode');
+const files = require('./projectfiles');
+const { Billing } = require('./billing');
 const store = require('./store');
+
+// Diagrams and images from a workstream's architecture/ and docs/ folders (projectfiles.js).
+protocol.registerSchemesAsPrivileged([{ scheme: 'polycli-view', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 
 app.setAppUserModelId('polycli');
 if (process.env.POLYCLI_HOME) app.setPath('userData', path.join(process.env.POLYCLI_HOME, 'electron'));
@@ -17,6 +22,7 @@ if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
 let win = null;
 let manager = null;
 let cowork = null;
+let billing = null;
 
 function createWindow() {
   win = new BrowserWindow({
@@ -26,7 +32,12 @@ function createWindow() {
     webPreferences: { preload: path.join(__dirname, '..', 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  // A link in a diagram (a source line on GitHub) opens in the browser; nothing opens in-app.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    const u = require('./git').safeGithubUrl(url);
+    if (u) shell.openExternal(u);
+    return { action: 'deny' };
+  });
   win.webContents.on('will-navigate', e => e.preventDefault());
 }
 
@@ -35,7 +46,9 @@ function send(channel, ...args) {
 }
 
 function snapshot() {
-  return { ...manager.snapshot(), cowork: cowork ? cowork.snapshot() : null };
+  const snap = manager.snapshot();
+  if (billing) snap.workstreams = snap.workstreams.map(w => ({ ...w, billable: billing.isBillable(w.folder) }));
+  return { ...snap, cowork: cowork ? cowork.snapshot() : null, billing: billing ? billing.summary() : null };
 }
 
 function pushState() {
@@ -122,6 +135,14 @@ const OPS = {
   restoreWorkstream: a => manager.restoreWorkstream({ id: a.id }),
   globalKeys: () => require('./env').globalKeys(),
   helpText: () => require('fs').readFileSync(path.join(__dirname, '..', '..', 'resources', 'help', 'HELP.md'), 'utf8'),
+  setBillable: a => billing.setBillable(manager.ws(a.workstreamId), !!a.on),
+  billingHistory: () => billing.history(),
+  archList: a => files.listArchitecture(manager.ws(a.workstreamId).folder),
+  docList: a => files.listDir(manager.ws(a.workstreamId).folder, a.rel),
+  docRead: a => files.readFile(manager.ws(a.workstreamId).folder, a.rel),
+  docWrite: a => files.writeFile(manager.ws(a.workstreamId).folder, a.rel, a.text, a.mtime, !!a.force),
+  docCreate: a => files.createDoc(manager.ws(a.workstreamId).folder, a.rel, a.name),
+  openLink: a => { if (!/^https:\/\//i.test(String(a.url))) throw new Error('Only https links can be opened'); return shell.openExternal(String(a.url)); },
   gitFiles: a => manager.gitFiles(a.id),
   commitSession: a => manager.commitSession({ id: a.id, message: a.message, all: a.all }),
   pushSession: a => manager.pushSession({ id: a.id }),
@@ -174,6 +195,7 @@ function wireIpc() {
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
+  files.installViewProtocol(protocol, id => manager.state.workstreams.find(w => w.id === id)?.folder);
   ensureDirs();
   prunePastes();
   installHelpers();
@@ -183,6 +205,10 @@ app.whenReady().then(() => {
   pty.on('data', (term, data) => send('pty:data', term, data));
   manager.on('changed', pushState);
   cowork = new Cowork(manager);
+  billing = new Billing(manager, {
+    isActive: () => !!win && !win.isDestroyed() && win.isVisible() && !win.isMinimized() && win.isFocused(),
+    idleSeconds: () => powerMonitor.getSystemIdleTime(),
+  });
   cowork.on('attention', () => { if (win && !win.isDestroyed() && !win.isFocused()) win.flashFrame(true); });
   const bridge = new BridgeServer(cowork);
   bridge.on('error', e => console.error(`bridge pipe (${bridgePipeName()}) failed`, e.message));
@@ -211,6 +237,7 @@ app.whenReady().then(() => {
 
   wireIpc();
   createWindow();
+  billing.start();
   win.webContents.once('did-finish-load', () => {
     manager.restore();
     manager.startPolling();
@@ -220,7 +247,7 @@ app.whenReady().then(() => {
 
   win.on('focus', () => win.flashFrame(false));
   app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
-  app.on('before-quit', () => { cowork.dispose(); bridge.stop(); manager.dispose(); hooks.stop(); pty.dispose(); store.flush(); });
+  app.on('before-quit', () => { billing.stop(); cowork.dispose(); bridge.stop(); manager.dispose(); hooks.stop(); pty.dispose(); store.flush(); });
 });
 
 app.on('window-all-closed', () => app.quit());

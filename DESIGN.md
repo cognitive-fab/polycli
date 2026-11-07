@@ -315,6 +315,17 @@ Per session and rolled up per workstream, an **Artifacts** panel lists:
 - Global hotkey `Win+Alt+C`. A tray icon carries the needs-you count. Windows toasts fire on needs-you and on bridge requests.
 - The window title shows the active workstream name.
 
+## 9a. Project views and Mistral
+
+- **Views.** The active workstream has three views at the same level: Main (tabs and terminals), Architecture and Docs (`ui.view`). Switching never closes a terminal.
+- **Files** (`main/projectfiles.js`). Architecture lists `*.architecture.html` (not `.visual-check.`) from `architecture/` or `docs/architecture/`, titled from the matching `.json`. Docs lists `docs/` with folders as tiles. Every path is relative to the workstream folder, confined to `architecture/` and `docs/` on the real path. polycli edits only existing `.md/.markdown/.txt` files (refusing when the mtime moved since it was read) and creates new `.md` files; this is the one place it writes project files, and only on a click.
+- **Viewer.** HTML and images load in a sandboxed iframe from `polycli-view://<workstream id>/<path>`, served by main with its own CSP (inline scripts, Google Fonts, nothing else). The iframe has `allow-same-origin` only because archlens pages use localStorage; its origin differs from the app's.
+- **Mistral.** `+ Mistral` is a shell tab (`agent: 'mistral'`) that runs Mistral Vibe (`vibe`); restart reruns it. No API integration: Vibe handles the subscription login or `MISTRAL_API_KEY`.
+
+## 9b. Time and tokens (`main/billing.js`)
+
+Per folder (not per workstream), in hourly local buckets in `state.billing`: `bill` (my seconds), `gen` (Claude's `turn_duration`) and `out` (output tokens). Transcripts are read incrementally by byte offset (a message written once per content block is counted once, by id), so restarts never double count and history survives Claude pruning transcripts. `bill` ticks every 5 s while the folder is billable, its workstream is selected, the window is focused, system idle is under 5 minutes and no session of the workstream is `busy`. Week = since Monday 07:00 local. Still open: attributing time per workstream or Cowork task, and manual adjustments.
+
 ## 10. Architecture (Electron)
 
 ```

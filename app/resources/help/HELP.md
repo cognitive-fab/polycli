@@ -56,6 +56,23 @@ When Claude needs a decision (a permission prompt, for example), the session tur
 
 **+ Shell** opens PowerShell in the workstream folder, with the workstream's environment variables. Shells end when polycli closes and new ones open in the same folders when it starts again; their history isn't kept.
 
+## Mistral
+
+**+ Mistral** opens Mistral Vibe (the `vibe` command) in a new tab in the workstream folder, with the workstream's environment variables. Sign in or paste your key the first time Vibe asks, or set `MISTRAL_API_KEY` in the workstream's settings. When you quit Vibe the tab stays on a shell; restarting polycli starts Vibe again.
+
+## Architecture and Docs
+
+Above the tabs, **Main**, **Architecture** and **Docs** switch what the workstream shows.
+
+- **Architecture** shows the archlens diagrams found in `docs/architecture/` (or `architecture/`) of the workstream folder as tiles. Click one to open it in the viewer; ‹ › move between diagrams. The architecture document (README.md) is the last tile.
+- **Docs** shows `docs/` as tiles: folders drill down, the path above the tiles takes you back up. Click a Markdown file to preview it; **Edit** shows the source beside a live preview, **Save** (Ctrl+S) writes it. If the file changed on disk meanwhile, polycli asks before overwriting. HTML files and images open in the viewer; **+ New document** creates a Markdown file in the current folder.
+
+## Time and tokens
+
+The pill at the top right shows, for the selected workstream's folder, what Claude did this week: generation time and output tokens, like `(5m 38s · ↓ 40.7k tokens)`. The week resets Monday at 7:00.
+
+Tick **Billable folder** in a workstream's settings to also count your own time on it: the workstream is selected, polycli is the focused window, you haven't been idle for 5 minutes, and none of its Claude sessions is generating. The pill then starts with `⏱` and this month's total, and glows while counting. Click the pill for monthly totals per folder, with days underneath, and **Copy CSV**.
+
 ## Copy and paste
 
 - **Drag** to select text, then **Ctrl+C** to copy. With nothing selected, Ctrl+C goes to Claude as usual.

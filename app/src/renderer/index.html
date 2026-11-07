@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data: polycli-view:; frame-src polycli-view:">
   <title>polycli</title>
   <link rel="stylesheet" href="../../node_modules/@xterm/xterm/css/xterm.css">
   <link rel="stylesheet" href="styles.css">
@@ -12,7 +12,8 @@
     <div class="brand">polycli</div>
     <div class="topbar-title" id="topTitle"></div>
     <div class="topbar-right">
-      <button class="inbox" id="helpBtn" title="Help">? Help</button>
+      <button class="inbox" id="billBtn" title="Time and tokens for this folder; click for monthly totals" hidden></button>
+      <button class="inbox" id="helpBtn"title="Help">? Help</button>
       <button class="inbox" id="appSettingsBtn" title="polycli settings">⚙</button>
       <button class="inbox" id="themeBtn" title="Theme: System, Light or Dark">◐ System</button>
       <button class="inbox" id="keysBtn" title="Windows key variables and the workstreams that use them">Keys</button>
@@ -30,8 +31,14 @@
     </aside>
     <main class="main">
       <div class="cowork-strip" id="coworkStrip" hidden></div>
+      <div class="viewbar" id="viewbar" hidden>
+        <button data-view="main" title="Claude sessions and shells">Main</button>
+        <button data-view="architecture" title="The archlens diagrams in architecture/ and docs/architecture/">Architecture</button>
+        <button data-view="docs" title="The documents in docs/: preview and edit Markdown">Docs</button>
+      </div>
       <div class="tabs" id="tabs"></div>
       <div class="panes" id="panes"></div>
+      <div class="project" id="project" hidden></div>
       <div class="empty" id="empty" hidden></div>
     </main>
   </div>
