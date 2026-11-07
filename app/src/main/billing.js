@@ -40,7 +40,9 @@ class Billing {
   }
   get b() {
     const s = this.m.state;
-    if (!s.billing) s.billing = { workstreams: {}, hours: {}, scans: {} };
+    // An earlier build keyed everything by folder ({ folders, hours, scans }). Start
+    // over: the scans are dropped too, so the transcripts are read again per workstream.
+    if (!s.billing || !s.billing.workstreams) s.billing = { workstreams: {}, hours: {}, scans: {} };
     return s.billing;
   }
   start() {
