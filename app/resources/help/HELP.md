@@ -56,6 +56,17 @@ When Claude needs a decision (a permission prompt, for example), the session tur
 
 **+ Shell** opens PowerShell in the workstream folder, with the workstream's environment variables. Shells end when polycli closes and new ones open in the same folders when it starts again; their history isn't kept.
 
+## Mistral
+
+**+ Mistral** opens Mistral Vibe (the `vibe` command) in a new tab in the workstream folder, with the workstream's environment variables. Sign in or paste your key the first time Vibe asks, or set `MISTRAL_API_KEY` in the workstream's settings. When you quit Vibe the tab stays on a shell; restarting polycli starts Vibe again.
+
+## Architecture and Docs
+
+Above the tabs, **Main**, **Architecture** and **Docs** switch what the workstream shows.
+
+- **Architecture** shows the archlens diagrams found in `docs/architecture/` (or `architecture/`) of the workstream folder as tiles. Click one to open it in the viewer; ‹ › move between diagrams. The architecture document (README.md) is the last tile.
+- **Docs** shows `docs/` as tiles: folders drill down, the path above the tiles takes you back up. Click a Markdown file to preview it; **Edit** shows the source beside a live preview, **Save** (Ctrl+S) writes it. If the file changed on disk meanwhile, polycli asks before overwriting. HTML files and images open in the viewer; **+ New document** creates a Markdown file in the current folder.
+
 ## Copy and paste
 
 - **Drag** to select text, then **Ctrl+C** to copy. With nothing selected, Ctrl+C goes to Claude as usual.

@@ -316,6 +316,13 @@ Per session and rolled up per workstream, an **Artifacts** panel lists:
 - Global hotkey `Win+Alt+C`. A tray icon carries the needs-you count. Windows toasts fire on needs-you and on bridge requests.
 - The window title shows the active workstream name.
 
+## 9a. Project views and Mistral
+
+- **Views.** The active workstream has three views at the same level: Main (tabs and terminals), Architecture and Docs (`ui.view`). Switching never closes a terminal.
+- **Files** (`main/projectfiles.js`). Architecture lists `*.architecture.html` (not `.visual-check.`) from `architecture/` or `docs/architecture/`, titled from the matching `.json`. Docs lists `docs/` with folders as tiles. Every path is relative to the workstream folder, confined to `architecture/` and `docs/` on the real path. polycli edits only existing `.md/.markdown/.txt` files (refusing when the mtime moved since it was read) and creates new `.md` files; this is the one place it writes project files, and only on a click.
+- **Viewer.** HTML and images load in a sandboxed iframe from `polycli-view://<workstream id>/<path>`, served by main with its own CSP (inline scripts, Google Fonts, nothing else). The iframe has `allow-same-origin` only because archlens pages use localStorage; its origin differs from the app's.
+- **Mistral.** `+ Mistral` is a shell tab (`agent: 'mistral'`) that runs Mistral Vibe (`vibe`); restart reruns it. No API integration: Vibe handles the subscription login or `MISTRAL_API_KEY`.
+
 ## 10. Architecture (Electron)
 
 ```

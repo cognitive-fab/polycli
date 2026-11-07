@@ -1,6 +1,7 @@
 // polycli renderer: workstream rail, tabs, panes with session headers, xterm.js terminals.
 import { Terminal } from '../../node_modules/@xterm/xterm/lib/xterm.mjs';
 import { FitAddon } from '../../node_modules/@xterm/addon-fit/lib/addon-fit.mjs';
+import { showProject, hideProject, isDirty } from './views.js';
 
 const api = window.polycli;
 const $ = sel => document.querySelector(sel);
@@ -84,9 +85,15 @@ function render() {
   renderTabs();
   renderPanes();
   const none = !liveWorkstreams().length;
+  const view = ws && ['architecture', 'docs'].includes(S.ui.view) ? S.ui.view : 'main';
+  $('#viewbar').hidden = !ws;
+  for (const b of document.querySelectorAll('#viewbar [data-view]')) b.classList.toggle('active', b.dataset.view === view);
   $('#empty').hidden = !none;
-  $('#tabs').hidden = none;
-  $('#panes').hidden = none;
+  $('#tabs').hidden = none || view !== 'main';
+  $('#panes').hidden = none || view !== 'main';
+  $('#project').hidden = view === 'main';
+  if (view === 'main') hideProject();
+  else showProject($('#project'), { ws, view, call, toast, ask });
   if (none) $('#empty').innerHTML = S.workstreams.length
     ? `<div><h2>All workstreams are archived</h2><p>Restore one from the Archived list at the bottom of the left rail, or create a new one.</p><button class="btn primary" id="emptyAdd">Create a workstream</button></div>`
     : `<div><h2>No workstreams yet</h2><p>A workstream groups the Claude sessions, shells and folders of one piece of work.</p><button class="btn primary" id="emptyAdd">Create a workstream</button></div>`;
@@ -206,6 +213,7 @@ function renderRail() {
         <div class="ws-actions">
           <button class="chip" data-act="newClaude">+ Claude</button>
           <button class="chip" data-act="newShell">+ Shell</button>
+          <button class="chip" data-act="newMistral" title="Mistral Vibe in a new tab (needs the vibe CLI and a Mistral key)">+ Mistral</button>
           <button class="chip" data-act="wsCode" title="Open the workstream folder in VS Code">VS Code</button>
           <button class="chip" data-act="wsCowork" title="Cowork tasks linked to this workstream, their artifacts and prompts">Cowork${(() => { const n = (S.cowork?.links || []).filter(l => l.workstreamId === w.id && l.state === 'active').length; return n ? ` · ${n}` : ''; })()}</button>
           <button class="chip" data-act="wsSettings" title="Name, color, environment variables and the global keys this workstream uses">⚙ Settings${(w.env || []).length ? ` · ${w.env.length} var${w.env.length === 1 ? '' : 's'}` : ''}</button>
@@ -340,7 +348,7 @@ function renderPanes() {
       const h = t.rec;
       const hw = S.workstreams.find(x => x.id === h.workstreamId);
       const stale = hw && h.state === 'running' && (h.envRev || 0) !== (hw.envRev || 0);
-      top.innerHTML = `<div class="notice info"><span class="grow">${esc(h.command)} · <button class="cwd btn" data-act="code-shell" style="font-family:var(--mono)">${esc(h.cwdShort)}</button>${stale ? ' · environment variables changed; open a new shell to get them' : ''}</span>${h.state !== 'running' ? '<button class="btn" data-act="restart-shell">Restart shell</button>' : ''}</div>`;
+      top.innerHTML = `<div class="notice info"><span class="grow">${esc(h.agent === 'mistral' ? 'Mistral Vibe (vibe)' : h.command)} ·<button class="cwd btn" data-act="code-shell" style="font-family:var(--mono)">${esc(h.cwdShort)}</button>${stale ? ' · environment variables changed; open a new shell to get them' : ''}</span>${h.state !== 'running' ? '<button class="btn" data-act="restart-shell">Restart shell</button>' : ''}</div>`;
       top.dataset.shell = h.id;
       showTerm(pane, termId, true, '');
     }
@@ -350,7 +358,7 @@ function renderPanes() {
   if (ws && !tabs.length) {
     if (!hint) { hint = document.createElement('div'); hint.className = 'pane pane-empty placeholder'; panes.appendChild(hint); }
     const closed = sessionsOf(ws.id).length;
-    hint.innerHTML = `<div><p>Nothing open in ${esc(ws.name)}.</p><p><button class="btn primary" data-act="newClaude">+ Claude session</button> <button class="btn" data-act="newShell">+ Shell</button></p>${closed ? '<p>Closed sessions are listed in the rail; click one to reopen it.</p>' : ''}</div>`;
+    hint.innerHTML = `<div><p>Nothing open in ${esc(ws.name)}.</p><p><button class="btn primary" data-act="newClaude">+ Claude session</button> <button class="btn" data-act="newShell">+ Shell</button> <button class="btn" data-act="newMistral">+ Mistral</button></p>${closed ? '<p>Closed sessions are listed in the rail; click one to reopen it.</p>' : ''}</div>`;
   } else {
     hint?.remove();
   }
@@ -780,6 +788,19 @@ function fitTerm(t) {
 }
 
 // ---------------- dialogs ----------------
+// One text answer in a dialog; resolves to the text, or null when cancelled.
+function ask(title, label, value = '') {
+  return new Promise(resolve => {
+    let answer = null;
+    const form = modal(`<h3>${esc(title)}</h3>
+      <label class="field"><span>${esc(label)}</span><input name="v" value="${esc(value)}" maxlength="80" required></label>
+      <div class="modal-actions"><button type="button" class="btn" data-cancel>Cancel</button><button class="btn primary">OK</button></div>`,
+    async fd => { answer = String(fd.get('v')).trim(); });
+    form.querySelector('input').focus();
+    const back = $('#modalBack');
+    new MutationObserver((_m, ob) => { if (back.hidden) { ob.disconnect(); resolve(answer); } }).observe(back, { attributes: true, attributeFilter: ['hidden'] });
+  });
+}
 function modal(html, onSubmit, { wide = false } = {}) {
   const back = $('#modalBack'), form = $('#modal');
   form.innerHTML = html + `<div class="error" id="modalErr"></div>`;
@@ -1048,6 +1069,7 @@ document.addEventListener('click', async e => {
     if (!e.target.closest('.inbox-menu')) $('#inboxMenu').hidden = true;
     return;
   }
+  if ((el.dataset.tab || el.dataset.selectWs) && !leaveOk()) return;
   if (el.dataset.close) {
     e.stopPropagation();
     const [kind, id] = el.dataset.close.split(':');
@@ -1061,7 +1083,8 @@ document.addEventListener('click', async e => {
     const s = S.sessions.find(x => x.id === id) || S.shells.find(x => x.id === id);
     if (s && s.workstreamId !== S.ui.activeWorkstream) await call('setActive', { id: s.workstreamId });
     S.ui.activeTab = el.dataset.tab;
-    await call('setUi', { activeTab: el.dataset.tab });
+    S.ui.view = 'main';
+    await call('setUi', { activeTab: el.dataset.tab, view: 'main' });
     return;
   }
   if (el.dataset.selectWs) { await call('setActive', { id: el.dataset.selectWs }); return; }
@@ -1079,7 +1102,8 @@ document.addEventListener('click', async e => {
   const sid = el.closest('[data-session]')?.dataset.session;
   const hid = el.closest('[data-shell]')?.dataset.shell;
   if (act === 'newClaude' && ws) return newSessionDialog(ws);
-  if (act === 'newShell' && ws) return call('newShell', { workstreamId: ws.id });
+  if (act === 'newShell' && ws) return call('newShell', { workstreamId: ws.id }).then(() => setView('main'));
+  if (act === 'newMistral' && ws) return call('newShell', { workstreamId: ws.id, agent: 'mistral' }).then(() => setView('main'));
   if (act === 'wsCode' && ws) return openVSCode({ workstreamId: ws.id }, e);
   if (act === 'wsSettings' && ws) return wsSettingsDialog(ws);
   if (act === 'wsCowork' && ws) return coworkDialog(ws);
@@ -1106,6 +1130,15 @@ document.addEventListener('click', async e => {
   }
 });
 
+// Main (terminals), Architecture and Docs: the view of the active workstream.
+const leaveOk = () => !isDirty() || confirm('This document has unsaved changes. Discard them?');
+function setView(view) {
+  if ((S.ui.view || 'main') === view || !leaveOk()) return;
+  S.ui.view = view;
+  render();
+  return call('setUi', { view });
+}
+$('#viewbar').onclick = e => { const b = e.target.closest('[data-view]'); if (b) setView(b.dataset.view); };
 $('#addWs').onclick = newWorkstreamDialog;
 $('#themeBtn').onclick = () => {
   const order = ['system', 'light', 'dark'];
@@ -1123,7 +1156,7 @@ api.onState(s => { S = s; render(); });
 api.onFocusTab(async tab => {
   const s = S.sessions.find(x => x.id === tab.slice(2));
   if (s) await call('setActive', { id: s.workstreamId });
-  await call('setUi', { activeTab: tab });
+  await call('setUi', { activeTab: tab, view: 'main' });
 });
 api.onData((termId, data) => {
   const t = terms.get(termId);

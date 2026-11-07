@@ -47,6 +47,10 @@ const waiting = e => e.status === 'idle' || e.state === 'blocked';
 // them), and the terminal's replies to queries (DA, DSR, DECRQM, OSC, DCS).
 const NOT_TYPING = /^(?:\x1b\[[IO]|\x1b\[[56]~|\x1b\[1;5[FH]|\x1b\[<\d+;\d+;\d+[Mm]|\x1b\[[?>]?[\d;]*[cRn]|\x1b\[\??[\d;]*\$y|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1bP[^\x1b]*\x1b\\)+$/;
 
+// Other coding CLIs hosted as a shell tab. The key (MISTRAL_API_KEY) comes from the
+// workstream's environment variables or the Windows environment, like any shell's.
+const AGENTS = { mistral: { label: 'mistral', command: 'vibe' } };
+
 const newId = () => crypto.randomUUID();
 const now = () => Date.now();
 const clip = (s, n) => (typeof s === 'string' ? (s.length > n ? s.slice(0, n - 1) + '…' : s) : null);
@@ -265,6 +269,7 @@ class Manager extends EventEmitter {
   setUi(patch) {
     for (const k of ['activeTab', 'collapsed']) if (k in patch) this.state.ui[k] = patch[k];
     if ('theme' in patch && ['system', 'light', 'dark'].includes(patch.theme)) this.state.ui.theme = patch.theme;
+    if ('view' in patch && ['main', 'architecture', 'docs'].includes(patch.view)) this.state.ui.view = patch.view;
     if ('promptsHidden' in patch) this.state.ui.promptsHidden = !!patch.promptsHidden;
     this.changed();
   }
@@ -424,9 +429,9 @@ class Manager extends EventEmitter {
   // ---------- shells ----------
   // `run` is a command for this first start only (Deploy). The stored args stay a plain
   // shell, so restarting polycli never runs it again.
-  newShell({ workstreamId, cwd, run, name }) {
+  newShell({ workstreamId, cwd, run, name, agent }) {
     const w = this.liveWs(workstreamId);
-    const h = { id: newId(), workstreamId: w.id, name: name || 'pwsh', cwd: checkedDir(cwd || w.folder), command: 'pwsh.exe', args: ['-NoLogo'], open: true, state: 'running', createdAt: now() };
+    const h = { id: newId(), workstreamId: w.id, name: name || (agent ? AGENTS[agent].label : 'pwsh'), agent: agent || null, cwd: checkedDir(cwd || w.folder), command: 'pwsh.exe', args: ['-NoLogo'], open: true, state: 'running', createdAt: now() };
     this.state.shells.push(h);
     this.state.ui.activeTab = `h:${h.id}`;
     this.startShell(h, run);
@@ -438,6 +443,9 @@ class Manager extends EventEmitter {
     h.envRev = w?.envRev || 0;
     let extra = {};
     try { if (w) extra = this.envFor(w); } catch (e) { h.envRev = -1; console.error('shell environment unavailable', e.message); }
+    // An agent shell (Mistral Vibe) starts its CLI again on restart and when polycli
+    // reopens; the shell stays behind it when the CLI exits.
+    run = run || (h.agent && AGENTS[h.agent]?.command);
     const args = run ? [...h.args, '-NoExit', '-Command', run] : h.args;
     this.pty.spawn(`h:${h.id}`, h.command, args, { cwd: h.cwd, env: cleanEnv(extra), cols: h.cols || 120, rows: h.rows || 32 });
     this.changed();
