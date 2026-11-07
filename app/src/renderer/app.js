@@ -79,6 +79,7 @@ function render() {
   applyTheme();
   const ws = activeWs();
   $('#topTitle').textContent = ws ? `${ws.name} · ${ws.folderShort || ws.folder}` : '';
+  renderBilling();
   renderInbox();
   renderCowork();
   renderRail();
@@ -98,6 +99,49 @@ function render() {
     ? `<div><h2>All workstreams are archived</h2><p>Restore one from the Archived list at the bottom of the left rail, or create a new one.</p><button class="btn primary" id="emptyAdd">Create a workstream</button></div>`
     : `<div><h2>No workstreams yet</h2><p>A workstream groups the Claude sessions, shells and folders of one piece of work.</p><button class="btn primary" id="emptyAdd">Create a workstream</button></div>`;
   if (none) $('#emptyAdd').onclick = newWorkstreamDialog;
+}
+
+// ---------------- time and tokens per folder ----------------
+const fmtDur = sec => {
+  const s = Math.round(sec);
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
+  return `${Math.floor(s / 3600)}h ${String(Math.floor(s / 60) % 60).padStart(2, '0')}m`;
+};
+const fmtTok = n => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n));
+const fmtHours = sec => (sec / 3600).toFixed(2);
+
+// Topbar: this week's Claude generation time and output tokens for the selected
+// folder (resets Monday 07:00) and, on a billable folder, my time this month.
+function renderBilling() {
+  const b = S.billing, btn = $('#billBtn');
+  btn.hidden = !b;
+  if (!b) return;
+  const week = `(${fmtDur(b.weekGenSec)} · ↓ ${fmtTok(b.weekOut)} tokens)`;
+  btn.classList.toggle('hot', b.running);
+  btn.innerHTML = b.billable ? `<span class="inbox-dot"></span>⏱ ${fmtDur(b.monthSec)} ${esc(week)}` : esc(week);
+  const wk = new Date(b.weekStart).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+  btn.title = `${b.label}: this week since ${wk}, Claude generated for ${fmtDur(b.weekGenSec)} and wrote ${b.weekOut.toLocaleString()} output tokens.`
+    + (b.billable ? `\nBillable: you today ${fmtDur(b.todaySec)}, this month ${fmtDur(b.monthSec)}; ${b.running ? 'counting now' : 'paused (not focused, idle, or Claude is generating)'}.` : '')
+    + '\nClick for monthly totals.';
+}
+
+async function billingDialog() {
+  const months = await call('billingHistory');
+  const rows = months.map((M, i) => `<details ${i === 0 ? 'open' : ''}><summary><b>${esc(M.month)}</b><span class="bill-cols"><span>${fmtHours(M.total.bill)} h billable</span><span>${fmtDur(M.total.gen)} Claude</span><span>↓ ${fmtTok(M.total.out)}</span></span></summary>
+      <table class="keys-table"><thead><tr><th>Folder</th><th>Billable</th><th>Claude</th><th>Output tokens</th></tr></thead><tbody>
+      ${M.rows.map(R => `<tr><td>${esc(R.label)}${R.billable ? '' : ' <small>not billable</small>'}</td><td>${fmtHours(R.bill)} h</td><td>${fmtDur(R.gen)}</td><td>${R.out.toLocaleString()}</td></tr>
+        ${R.days.map(D => `<tr class="bill-day"><td>${esc(D.day)}</td><td>${fmtHours(D.bill)} h</td><td>${fmtDur(D.gen)}</td><td>${D.out.toLocaleString()}</td></tr>`).join('')}`).join('')}
+      </tbody></table></details>`).join('');
+  const form = modal(`<h3>Billing history</h3>
+    <p class="hint">Billable = the time you worked on a billable folder: its workstream selected, polycli focused, you not idle for 5 minutes, and no Claude session of the workstream generating. Claude time and output tokens come from the session transcripts. Mark a folder billable in its workstream's settings.</p>
+    <div class="bill-list">${rows || '<p class="hint">Nothing recorded yet.</p>'}</div>
+    <div class="modal-actions"><button type="button" class="btn" id="billCsv" style="margin-right:auto">Copy CSV</button><button type="button" class="btn" data-cancel>Close</button></div>`, async () => {}, { wide: true });
+  form.querySelector('#billCsv').onclick = () => {
+    const csv = ['month,day,folder,billable_hours,claude_seconds,output_tokens'];
+    for (const M of months) for (const R of M.rows) for (const D of R.days) csv.push([M.month, D.day, `"${R.label.replace(/"/g, '""')}"`, fmtHours(D.bill), Math.round(D.gen), D.out].join(','));
+    copyText(csv.join('\n'), 'Copied billing CSV');
+  };
 }
 
 function renderInbox() {
@@ -893,6 +937,7 @@ async function wsSettingsDialog(ws) {
       <label class="field"><span>New sessions requested by Cowork</span><select name="coworkOpen"><option value="ask" ${(ws.coworkOpen || 'ask') === 'ask' ? 'selected' : ''}>Ask me each time</option><option value="allow" ${ws.coworkOpen === 'allow' ? 'selected' : ''}>Start without asking (in this folder)</option></select></label>
     </div>
     <label class="field"><span>Deploy command (runs in a new shell tab from the Deploy button; leave empty to use a package.json "deploy" script if there is one)</span><input name="deploy" value="${esc(ws.deploy || '')}" placeholder="npm run deploy" spellcheck="false" style="font-family:var(--mono)"></label>
+    <label class="check-row"><input type="checkbox" name="billable" ${ws.billable ? 'checked' : ''}><span>Billable folder (${esc(ws.folderShort || ws.folder)}): count my time while this workstream is selected and polycli is focused, minus Claude's generation time. Applies to every workstream on this folder.</span></label>
     <div class="field"><span>Global keys this workstream uses (for your own tracking; every session already has them)</span>
       <div class="key-checks">${globals.length ? globals.map(g => `<label class="key-check"><input type="checkbox" name="uses" value="${esc(g.name)}" ${uses.has(g.name) ? 'checked' : ''}><code>${esc(g.name)}</code>${g.scope === 'machine' ? '<small>machine</small>' : ''}</label>`).join('') : '<span class="hint">No key-like Windows variables found.</span>'}</div>
     </div>
@@ -904,6 +949,7 @@ async function wsSettingsDialog(ws) {
       return r.dataset.existing && !value ? { name } : { name, value };
     }).filter(e => e.name || e.value);
     await api.call('updateWorkstream', { id: ws.id, name: fd.get('name'), color, env, uses: fd.getAll('uses'), deploy: fd.get('deploy'), coworkSend: fd.get('coworkSend'), coworkOpen: fd.get('coworkOpen') });
+    if ((fd.get('billable') === 'on') !== !!ws.billable) await api.call('setBillable', { workstreamId: ws.id, on: fd.get('billable') === 'on' });
     toast('Workstream saved');
   }, { wide: true });
   const rows = form.querySelector('#envRows');
@@ -1148,6 +1194,7 @@ $('#themeBtn').onclick = () => {
   call('setUi', { theme: next });
 };
 $('#keysBtn').onclick = () => keysDialog();
+$('#billBtn').onclick = () => billingDialog();
 $('#helpBtn').onclick = () => helpDialog();
 $('#appSettingsBtn').onclick = () => appSettingsDialog();
 $('#inboxBtn').onclick = e => { e.stopPropagation(); $('#inboxMenu').hidden = !$('#inboxMenu').hidden; };

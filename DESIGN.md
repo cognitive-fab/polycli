@@ -323,6 +323,10 @@ Per session and rolled up per workstream, an **Artifacts** panel lists:
 - **Viewer.** HTML and images load in a sandboxed iframe from `polycli-view://<workstream id>/<path>`, served by main with its own CSP (inline scripts, Google Fonts, nothing else). The iframe has `allow-same-origin` only because archlens pages use localStorage; its origin differs from the app's.
 - **Mistral.** `+ Mistral` is a shell tab (`agent: 'mistral'`) that runs Mistral Vibe (`vibe`); restart reruns it. No API integration: Vibe handles the subscription login or `MISTRAL_API_KEY`.
 
+## 9b. Time and tokens (`main/billing.js`)
+
+Per folder (not per workstream), in hourly local buckets in `state.billing`: `bill` (my seconds), `gen` (Claude's `turn_duration`) and `out` (output tokens). Transcripts are read incrementally by byte offset (a message written once per content block is counted once, by id), so restarts never double count and history survives Claude pruning transcripts. `bill` ticks every 5 s while the folder is billable, its workstream is selected, the window is focused, system idle is under 5 minutes and no session of the workstream is `busy`. Week = since Monday 07:00 local. Still open: attributing time per workstream or Cowork task, and manual adjustments.
+
 ## 10. Architecture (Electron)
 
 ```
