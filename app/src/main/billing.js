@@ -78,7 +78,7 @@ class Billing {
     const was = this.running;
     this.running = false;
     if (w && this.b.folders[normPath(w.folder)]?.billable && this.isActive() && this.idleSeconds() < IDLE_LIMIT_S
-      && !this.m.state.sessions.some(s => s.workstreamId === w.id && s.state === 'busy')) {
+      && !this.m.state.sessions.some(s => s.state === 'busy' && this.m.state.workstreams.some(x => x.id === s.workstreamId && normPath(x.folder) === normPath(w.folder)))) {
       this.bucket(normPath(w.folder), hourKey(new Date(now))).bill += dt;
       this.running = true;
     }

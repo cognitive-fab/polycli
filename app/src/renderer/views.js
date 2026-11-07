@@ -129,7 +129,10 @@ let current = null;   // { el, ws, view, dirty, ... } of the view on screen
 export function showProject(el, { ws, view, call, toast, ask }) {
   const key = `${ws.id}:${view}`;
   if (current && current.key === key && el.dataset.key === key) { current.ws = ws; return; }
-  if (current?.dirty && current.ws.id !== ws.id && !confirm('This document has unsaved changes. Discard them?')) return;
+  if (current?.dirty && current.ws.id !== ws.id && !confirm('This document has unsaved changes. Discard them?')) {
+    call('setActive', { id: current.ws.id });   // stay on the workstream the unsaved document belongs to
+    return;
+  }
   current = { key, el, ws, view, call, toast, ask, dirty: false };
   el.dataset.key = key;
   paint();
