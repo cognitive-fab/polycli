@@ -128,23 +128,13 @@ function renderCowork() {
   if (links.length > 3) rows.push(`<div class="cw-row"><span class="grow">${links.length - 3} more link request${links.length - 3 === 1 ? '' : 's'}</span></div>`);
   if (links.length > 1) rows.push(`<div class="cw-row"><span class="grow"></span><button class="btn" data-cw="reject-all">Reject all requests</button><button class="btn" data-cw="mute">Mute requests for 15 min</button></div>`);
   for (const a of cw.approvals) {
-    if (a.kind === 'turn') {
-      rows.push(`<div class="cw-row cw-approval" data-cw-turn="${a.id}">
-        <span class="cw-tag">Cowork</span>
-        <div class="grow"><div>Task <b>${esc(a.linkTitle)}</b> wants to send this prompt to <b>${esc(a.sessionName)}</b>${a.forced ? ' <span class="warn-text">(starts with a command character, so it always asks)</span>' : ''}:</div>
-          <pre class="cw-text"><span class="cw-first">${esc(a.firstLine)}</span>
+    rows.push(`<div class="cw-row cw-approval" data-cw-turn="${a.id}">
+      <span class="cw-tag">Cowork</span>
+      <div class="grow"><div>Task <b>${esc(a.linkTitle)}</b> wants to send this prompt to <b>${esc(a.sessionName)}</b>${a.forced ? ' <span class="warn-text">(starts with a command character, so it always asks)</span>' : ''}:</div>
+        <pre class="cw-text"><span class="cw-first">${esc(a.firstLine)}</span>
 ${esc(a.text)}</pre></div>
-        <div class="cw-acts"><button class="btn primary" data-cw="turn-approve">Send</button><button class="btn" data-cw="turn-reject">Reject</button></div>
-      </div>`);
-    } else {
-      const ws = S.workstreams.find(w => w.id === a.workstreamId);
-      rows.push(`<div class="cw-row cw-approval" data-cw-open="${a.id}">
-        <span class="cw-tag">Cowork</span>
-        <div class="grow"><div>Task <b>${esc(a.linkTitle)}</b> wants to start a Claude session <b>${esc(ws?.name || '')} · ${esc(a.role)}</b>${a.cwd ? ` in <code>${esc(a.cwd)}</code>` : ''}${a.model ? `, ${esc(a.model)}` : ''}${a.effort ? `, ${esc(a.effort)} effort` : ''}${a.prompt ? ', with this first prompt:' : '.'}</div>
-          ${a.prompt ? `<pre class="cw-text">${esc(a.prompt)}</pre>` : ''}</div>
-        <div class="cw-acts"><button class="btn primary" data-cw="open-approve">Start</button><button class="btn" data-cw="open-reject">Reject</button></div>
-      </div>`);
-    }
+      <div class="cw-acts"><button class="btn primary" data-cw="turn-approve">Send</button><button class="btn" data-cw="turn-reject">Reject</button></div>
+    </div>`);
   }
   bar.innerHTML = rows.join('');
   bar.hidden = false;
@@ -157,7 +147,6 @@ async function coworkClick(el) {
   if (act === 'mute') return call('coworkMute', { minutes: 15 }).then(() => toast('Cowork link requests muted for 15 minutes'));
   if (act.startsWith('link-')) return call('coworkDecide', { kind: 'link', id: row.dataset.cwLink, decision: act === 'link-approve' ? 'approve' : 'reject', workstreamId: row.querySelector('.cw-ws')?.value });
   if (act.startsWith('turn-')) return call('coworkDecide', { kind: 'turn', id: row.dataset.cwTurn, decision: act === 'turn-approve' ? 'approve' : 'reject' });
-  if (act.startsWith('open-')) return call('coworkDecide', { kind: 'open', id: row.dataset.cwOpen, decision: act === 'open-approve' ? 'approve' : 'reject' });
 }
 
 // The Cowork panel of a workstream: linked tasks, artifacts they reported, recent prompts.
@@ -869,7 +858,6 @@ async function wsSettingsDialog(ws) {
     </div>
     <div class="row">
       <label class="field"><span>Prompts from linked Cowork tasks</span><select name="coworkSend"><option value="ask" ${(ws.coworkSend || 'ask') === 'ask' ? 'selected' : ''}>Ask me each time</option><option value="allow" ${ws.coworkSend === 'allow' ? 'selected' : ''}>Send without asking</option></select></label>
-      <label class="field"><span>New sessions requested by Cowork</span><select name="coworkOpen"><option value="ask" ${(ws.coworkOpen || 'ask') === 'ask' ? 'selected' : ''}>Ask me each time</option><option value="allow" ${ws.coworkOpen === 'allow' ? 'selected' : ''}>Start without asking (in this folder)</option></select></label>
     </div>
     <label class="field"><span>Deploy command (runs in a new shell tab from the Deploy button; leave empty to use a package.json "deploy" script if there is one)</span><input name="deploy" value="${esc(ws.deploy || '')}" placeholder="npm run deploy" spellcheck="false" style="font-family:var(--mono)"></label>
     <div class="field"><span>Global keys this workstream uses (for your own tracking; every session already has them)</span>
@@ -882,7 +870,7 @@ async function wsSettingsDialog(ws) {
       const value = r.querySelector('.env-value').value;
       return r.dataset.existing && !value ? { name } : { name, value };
     }).filter(e => e.name || e.value);
-    await api.call('updateWorkstream', { id: ws.id, name: fd.get('name'), color, env, uses: fd.getAll('uses'), deploy: fd.get('deploy'), coworkSend: fd.get('coworkSend'), coworkOpen: fd.get('coworkOpen') });
+    await api.call('updateWorkstream', { id: ws.id, name: fd.get('name'), color, env, uses: fd.getAll('uses'), deploy: fd.get('deploy'), coworkSend: fd.get('coworkSend') });
     toast('Workstream saved');
   }, { wide: true });
   const rows = form.querySelector('#envRows');

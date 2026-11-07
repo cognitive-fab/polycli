@@ -208,17 +208,17 @@ Tools:
 | `polycli_link(task_title, workstream?)` / `polycli_link_status(link)` | Pair this Cowork task with a workstream (§7.3). Returns a `link` token that every tool below except `polycli_list` requires. |
 | `polycli_add_artifact(link, title, kind, url?, path?, description?)` | Cowork reports an artifact or document it produced (§8) |
 | `polycli_list(workstream?)` | Workstreams and sessions, with name, state, header info and pending turns |
-| `polycli_open_session(workstream, cwd, role, prompt?, model?, effort?)` | Launch a named CLI session in a workstream. The user's approval is required (§7.4). |
 | `polycli_send(link, session, text, client_ref, wait_seconds≤40)` | Queue a prompt (idempotent per `client_ref`). Returns `{turn_id, state}`. If the turn finishes within the wait, it also returns the response. |
 | `polycli_read(session, turn_id)` | `{state: queued\|running\|needs-you\|done\|failed, response, files_changed[], artifacts[], ended_at}` |
 | `polycli_status(session)` | Live state and header |
-| `polycli_close(session)` / `polycli_restart(session)` | Same as the buttons in §4 |
+
+**The user manages the connection** (decided 2026-11-06): they open the Cowork task, open or reopen the Claude session in polycli, and approve the link between them. Cowork never opens, closes or restarts a session; a prompt for a closed session fails with "ask the user to reopen it in polycli". (`polycli_open_session` existed until 0.2.0; `close` / `restart` tools were planned and dropped.)
 
 The wait is capped at 40 s because the relay fails calls at 60 s (spike 0c), so Cowork long-polls with `polycli_read`. Cowork cannot answer a CLI permission prompt. A `needs-you` state tells Cowork "waiting for the user in polycli", and the user approves it in the pane.
 
 ### 7.1a Built (2026-11-05)
 
-The bridge is implemented: the extension in `bridge/` (zero dependencies, packed with `npm run bridge:pack`), the pipe server in `app/src/main/bridge.js`, the turn/link core in `app/src/main/cowork.js`, and the UI (Cowork bar, Cowork panel, policies). Tools: `polycli_list`, `polycli_link`, `polycli_link_status`, `polycli_send`, `polycli_read`, `polycli_status`, `polycli_open_session`, `polycli_add_artifact`. Not built yet: `close` / `restart` tools, Edit & send, folder watching, legacy Cowork files, Pin a copy.
+The bridge is implemented: the extension in `bridge/` (zero dependencies, packed with `npm run bridge:pack`), the pipe server in `app/src/main/bridge.js`, the turn/link core in `app/src/main/cowork.js`, and the UI (Cowork bar, Cowork panel, policies). Tools: `polycli_list`, `polycli_link`, `polycli_link_status`, `polycli_send`, `polycli_read`, `polycli_status`, `polycli_add_artifact`. Not built yet: Edit & send, folder watching, legacy Cowork files, Pin a copy.
 
 **Findings that changed the delivery (probe, 2026-11-05):**
 - A long or multi-line bracketed paste is shown as `[Pasted text #1 +20 lines]` (after up to ~6 s), and `UserPromptSubmit` receives it wrapped in `<pasted_content id=…>`. Claude treats such pasted content as quoted data and declined to act on an instruction inside it. So every bridge prompt is preceded by a short line typed as the user's own input: `[polycli <turn id>] Request relayed from a Cowork task linked to this workstream (link <id>, approved by me in polycli | allowed by my polycli policy for this workstream). Please handle it:`. The wording is fixed: nothing the Cowork task chooses (not even its title) goes into this line, since Claude reads it as the user's own words. The approval bar shows this line above the prompt. With it, Claude answered the long prompt (smoke test: LONGPONG).
@@ -266,7 +266,6 @@ Tasks that never call the bridge can still be added by hand ("+ Cowork task" wit
 
 ### 7.4 Safety
 Cowork browses the web and reads documents. A prompt it relays into a CLI session with shell access is a prompt-injection path. So the policy is set **per workstream**:
-- `open_session`: **ask** (default) | allow.
 - `send`: **ask each** (default) | allow for this session | allow for this workstream.
   - The approval banner shows **exactly the bytes that will be sent**: the full prompt text, the calling Cowork task and the target session, with [Send] [Edit & send] [Reject].
 - Bridged sessions keep their own permission mode. polycli never adds `--dangerously-skip-permissions` or `bypassPermissions` for a bridge launch.
@@ -348,7 +347,7 @@ Per session and rolled up per workstream, an **Artifacts** panel lists:
 | **0: Spikes** (2–3 days) | (a) `claude --bg` + `attach` inside xterm.js/node-pty: resize, mouse, detach key, reattach after app kill. (b) Bracketed-paste prompt injection + `UserPromptSubmit`/`Stop` correlation. (c) Hello-world `.mcpb` called from Cowork: approval, latency, timeout. (d) statusLine fields: confirm `version` and `model.display_name`, and whether effort is present. | All four have a yes/no and numbers. Spike (c) decides the bridge transport. |
 | **1: Core terminal** | Workstreams; new / close / reopen / restart / restart-fresh / delete; headers; VS Code launch; shells and recipes; layouts; reattach on restart; status reconciliation; needs-you inbox and toasts. | A day of CLI work done in polycli. Killing polycli loses **no Claude session**, and shells come back from their recipes. |
 | **2: Cowork read side** | CoworkIndex; manual CoworkLinks; Artifacts panel (Cowork + CLI); pin a copy. | Every artifact and output of a linked Cowork task is listed and opens in one click. |
-| **3: Bridge** | `polycli-bridge` extension; send/read/open/close/restart; approvals and policies; audit-log attribution. | Cowork sends a prompt to a named CLI session, the user approves it once, and Cowork reads the answer back without the user copy-pasting. |
+| **3: Bridge** | `polycli-bridge` extension; send/read/status; approvals and policies; audit-log attribution. | Cowork sends a prompt to a named CLI session, the user approves it once, and Cowork reads the answer back without the user copy-pasting. |
 
 ## 12. Later
 - **WSL**: `wsl.exe -d <distro> -- claude --bg …` + attach; hooks via `/mnt/c` interop; distro-side `claude agents --json`, polled only when the distro is running.

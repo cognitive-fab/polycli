@@ -81,9 +81,11 @@ Click the **⧉ id** in the header to copy `claude attach <id>`, and run it in a
 
 ## Cowork bridge
 
-Cowork tasks can work with your polycli sessions: link to a workstream, send prompts to its Claude sessions and read the answers, start new sessions for parallel work, and report the artifacts and documents they produce.
+Cowork tasks can work with your polycli sessions: link to a workstream, send prompts to its Claude sessions and read the answers, and report the artifacts and documents they produce.
 
 **Set up once.** Click **Cowork** under a workstream, then **Install or update the extension…**. The Claude desktop app opens its install dialog for the **polycli bridge** extension (it says the extension is unsigned); install it. polycli must be running for Cowork to reach it.
+
+You manage the connection: open the Cowork task, open (or reopen) the Claude session in polycli, and approve the link. Cowork can't open, close or restart sessions; if the session it needs is closed, it asks you to reopen it.
 
 **In a Cowork task**, ask for it in plain words, for example: *"Use the polycli tools: link this task to the acme-api workstream, then ask the main session to run the tests and tell me the result."*
 
@@ -95,7 +97,7 @@ Cowork tasks can work with your polycli sessions: link to a workstream, send pro
 3. **Delivery.** polycli types the prompt into the session when it is idle (never while you are typing in it), with a first line saying which Cowork task sent it. The tab shows **◇ From Cowork** while it runs, and the answer goes back to the task.
 4. **Permission prompts** inside the session are still yours to answer in polycli; the Cowork task waits.
 
-**Policies** (workstream **⚙ Settings**): prompts from Cowork can be sent without asking, and new sessions it requests can start without asking (only in the workstream folder). Prompts that start with `!`, `/`, `#` or `@` always ask.
+**Policies** (workstream **⚙ Settings**): prompts from Cowork can be sent without asking. Prompts that start with `!`, `/`, `#` or `@` always ask.
 
 The **Cowork** panel of a workstream lists the linked tasks (with **Revoke**), the artifacts and documents they reported (**Open link**, **Show file**), and their recent prompts and answers.
 

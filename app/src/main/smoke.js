@@ -396,7 +396,7 @@ async function runUi({ app, win, manager }) {
     report.loginRow = await wc.executeJavaScript(`!!document.querySelector('#modal [name="login"]')`);
     await wc.executeJavaScript(`document.querySelector('[data-cancel]').click()`);
     await wc.executeJavaScript(`document.querySelector('#keysBtn').click()`);
-    await sleep(800);
+    for (let i = 0; i < 50 && !(await wc.executeJavaScript(`document.querySelectorAll('.keys-table tbody tr').length`)); i++) await sleep(100);
     await shot('keys');
     report.keyRows = await wc.executeJavaScript(`document.querySelectorAll('.keys-table tbody tr').length`);
     await wc.executeJavaScript(`document.querySelector('[data-cancel]').click()`);

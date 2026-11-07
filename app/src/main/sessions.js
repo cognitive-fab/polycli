@@ -202,11 +202,10 @@ class Manager extends EventEmitter {
   }
   // Workstream settings. env: [{ name, value? }]; a missing value keeps the stored one.
   // uses: names of global variables this workstream relies on (bookkeeping only).
-  updateWorkstream({ id, name, color, env, uses, deploy, coworkSend, coworkOpen }) {
+  updateWorkstream({ id, name, color, env, uses, deploy, coworkSend }) {
     const w = this.ws(id);
-    // Cowork bridge policy: ask (default) or allow, for prompts and for new sessions.
+    // Cowork bridge policy for prompts: ask (default) or allow.
     if (coworkSend !== undefined) w.coworkSend = coworkSend === 'allow' ? 'allow' : 'ask';
-    if (coworkOpen !== undefined) w.coworkOpen = coworkOpen === 'allow' ? 'allow' : 'ask';
     if (deploy !== undefined) {
       const d = String(deploy ?? '').trim();
       if (d.length > 500 || /[\r\n\0]/.test(d)) throw new Error('The deploy command must be one line');
@@ -738,7 +737,10 @@ class Manager extends EventEmitter {
     try {
       fs.appendFileSync(f, JSON.stringify(line) + '\n');
       if (fs.statSync(f).size > PROMPT_FILE_MAX) {
+        // Down to half the limit too, so long prompts don't make every append rewrite it.
         const keep = fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).slice(-PROMPT_KEEP);
+        let size = keep.reduce((n, l) => n + Buffer.byteLength(l) + 1, 0);
+        while (keep.length > 1 && size > PROMPT_FILE_MAX / 2) size -= Buffer.byteLength(keep.shift()) + 1;
         fs.writeFileSync(f, keep.join('\n') + '\n');
       }
     } catch (e) { console.error('prompt history', e.message); }

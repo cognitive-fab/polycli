@@ -10,7 +10,7 @@ const os = require('os');
 const path = require('path');
 const readline = require('readline');
 
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 // Same rules as polycli (app/src/main/paths.js and bridge.js).
 const HOME = process.env.POLYCLI_HOME || path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'polycli');
 const PIPE = '\\\\.\\pipe\\' + (process.env.POLYCLI_BRIDGE_PIPE || `polycli-bridge-${(os.userInfo().username || 'user').replace(/[^\w.-]/g, '_')}`);
@@ -23,7 +23,7 @@ const WAIT = max => ({ type: 'number', description: `Seconds to wait for a resul
 const TOOLS = [
   {
     name: 'polycli_list',
-    description: 'List the polycli workstreams on this computer and their Claude Code CLI sessions (name, state, folder, model). polycli is the user\'s terminal app for Claude Code sessions. Use it to find the workstream and session names for the other tools.',
+    description: 'List the polycli workstreams on this computer and their Claude Code CLI sessions (name, state, folder, model). polycli is the user\'s terminal app for Claude Code sessions. Use it to find the workstream and session names for the other tools. The user opens, closes and restarts sessions in polycli; these tools cannot, so if the session you need is missing or closed, ask the user to open it.',
     inputSchema: { type: 'object', properties: { workstream: { type: 'string', description: 'Only this workstream (name).' } } },
   },
   {
@@ -69,24 +69,6 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { link: LINK, session: { type: 'string' } }, required: ['link', 'session'] },
   },
   {
-    name: 'polycli_open_session',
-    description: 'Start a new Claude Code CLI session in the linked workstream, for parallel work (named "workstream · role"). The user approves it in polycli unless they allowed it. Optionally give a first prompt. Pass a client_ref and reuse it to check on the request later; returns the session name and, with a prompt, a turn_id for polycli_read.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        link: LINK,
-        role: { type: 'string', description: 'Short role for the session, e.g. "tests" or "docs".' },
-        client_ref: { type: 'string', description: 'Unique id you choose for this request; reuse it to check on it.' },
-        prompt: { type: 'string', description: 'Optional first prompt for the session.' },
-        cwd: { type: 'string', description: 'Folder (absolute). Default: the workstream folder.' },
-        model: { type: 'string', enum: ['opus', 'sonnet', 'haiku'] },
-        effort: { type: 'string', enum: ['low', 'medium', 'high', 'xhigh', 'max'] },
-        wait_seconds: WAIT(35),
-      },
-      required: ['link', 'role', 'client_ref'],
-    },
-  },
-  {
     name: 'polycli_add_artifact',
     description: 'Report an artifact or document this Cowork task produced for the linked workstream, so the user finds it in polycli next to the sessions. Call it for every artifact or document you create for this work: a claude.ai link (url) or a file on this computer (path).',
     inputSchema: {
@@ -103,7 +85,7 @@ const TOOLS = [
     },
   },
 ];
-const OPS = { polycli_list: 'list', polycli_link: 'link', polycli_link_status: 'link_status', polycli_send: 'send', polycli_read: 'read', polycli_status: 'status', polycli_open_session: 'open_session', polycli_add_artifact: 'add_artifact' };
+const OPS = { polycli_list: 'list', polycli_link: 'link', polycli_link_status: 'link_status', polycli_send: 'send', polycli_read: 'read', polycli_status: 'status', polycli_add_artifact: 'add_artifact' };
 
 function readToken() {
   try { return fs.readFileSync(TOKEN_FILE, 'utf8').trim(); } catch { return null; }

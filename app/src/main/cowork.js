@@ -1,13 +1,12 @@
 'use strict';
 // Cowork bridge, polycli side: links (a Cowork task paired with a workstream), turns
-// (a prompt from Cowork delivered into a CLI session, and its answer), open-session
-// requests and artifacts. The pipe server in bridge.js calls `handle(op, args)`.
+// (a prompt from Cowork delivered into a CLI session, and its answer) and artifacts.
+// Cowork never opens, closes or restarts sessions: the user manages them in polycli. The pipe server in bridge.js calls `handle(op, args)`.
 //
 // Everything a Cowork task sends is untrusted: prompts are delivered only after the
 // user approves them (or the workstream's policy allows it), always with a line saying
 // where they come from, and never with input-mode prefixes unless approved one by one.
 const crypto = require('crypto');
-const path = require('path');
 const { EventEmitter } = require('events');
 const { transcriptTail } = require('./sessions');
 const { tildify } = require('./paths');
@@ -43,7 +42,8 @@ class Cowork extends EventEmitter {
     const st = manager.state;
     st.cowork = st.cowork || {};
     this.c = st.cowork;
-    for (const k of ['links', 'turns', 'requests', 'artifacts']) this.c[k] = this.c[k] || [];
+    for (const k of ['links', 'turns', 'artifacts']) this.c[k] = this.c[k] || [];
+    delete this.c.requests;   // open-session requests, from before 0.2.0
     this.waiters = new Set();
     this.delivering = new Set();          // session ids with a paste in progress
     this.stuck = new Map();               // session id → { at, seq } after a paste that was never submitted
@@ -145,7 +145,6 @@ class Cowork extends EventEmitter {
       case 'read': return this.opRead(a);
       case 'status': return this.opStatus(a);
       case 'add_artifact': return this.opArtifact(a);
-      case 'open_session': return this.opOpen(a);
       default: throw new Error(`unknown operation ${op}`);
     }
   }
@@ -211,7 +210,7 @@ class Cowork extends EventEmitter {
     let t = this.c.turns.find(x => x.linkId === l.id && x.clientRef === ref);
     if (!t) {
       const text = this.checkText(a.text);
-      if (!s.open || s.state === 'closed') throw new Error(`Session ${s.name} is closed`);
+      if (!s.open || s.state === 'closed') throw new Error(`Session ${s.name} is closed. Ask the user to reopen it in polycli.`);
       const w = this.ws(s.workstreamId);
       const ask = (w.coworkSend || 'ask') !== 'allow' || MODE_PREFIX.test(text);
       t = { id: rid('t_'), linkId: l.id, sessionId: s.id, sessionName: s.name, clientRef: ref, text, state: ask ? 'awaiting-approval' : 'queued', approvedBy: ask ? null : 'policy', createdAt: now(), files: [] };
@@ -258,60 +257,6 @@ class Cowork extends EventEmitter {
     return { artifact_id: art.id, workstream: this.ws(l.workstreamId)?.name };
   }
 
-  async opOpen(a) {
-    const l = this.activeLink(a.link);
-    const ref = str(a.client_ref, 200, 'client_ref').trim();
-    if (!ref) throw new Error('client_ref is required (reuse it when retrying)');
-    let r = this.c.requests.find(x => x.linkId === l.id && x.clientRef === ref);
-    if (!r) {
-      const role = str(a.role, 60, 'role').trim();
-      if (!role) throw new Error('role is required (the session is named "workstream · role")');
-      const w = this.ws(l.workstreamId);
-      const prompt = a.prompt ? this.checkText(a.prompt) : null;
-      const cwd = str(a.cwd, 500, 'cwd').trim() || null;
-      // Policy "allow" covers folders inside the workstream folder only.
-      const inside = !cwd || path.resolve(cwd).toLowerCase().startsWith(path.resolve(w.folder).toLowerCase() + path.sep) || path.resolve(cwd).toLowerCase() === path.resolve(w.folder).toLowerCase();
-      const ask = (w.coworkOpen || 'ask') !== 'allow' || (prompt && MODE_PREFIX.test(prompt)) || !inside;
-      r = {
-        id: rid('o_'), linkId: l.id, workstreamId: w.id, clientRef: ref, role, cwd,
-        model: ['opus', 'sonnet', 'haiku'].includes(a.model) ? a.model : '', effort: ['low', 'medium', 'high', 'xhigh', 'max'].includes(a.effort) ? a.effort : '',
-        prompt, state: ask ? 'awaiting-approval' : 'approved', createdAt: now(),
-      };
-      this.c.requests.push(r);
-      this.event('open-request', { request: r.id, link: l.id, role });
-      if (ask) this.emit('attention', { kind: 'open', title: l.title, role });
-      else await this.startRequest(r, 'policy');
-      this.changed();
-    }
-    await this.waitFor(() => ['started', 'rejected', 'failed'].includes(r.state), a.wait_seconds ?? 30);
-    const out = { request_id: r.id, state: r.state };
-    if (r.state === 'awaiting-approval') out.note = 'Waiting for the user to approve the new session in polycli. Call polycli_open_session again with the same client_ref to check.';
-    if (r.sessionId) out.session = this.m.state.sessions.find(s => s.id === r.sessionId)?.name;
-    if (r.turnId) out.turn_id = r.turnId;
-    if (r.reason) out.reason = r.reason;
-    return out;
-  }
-
-  async startRequest(r, by) {
-    try {
-      const s = await this.m.newSession({ workstreamId: r.workstreamId, role: r.role, cwd: r.cwd || undefined, model: r.model, effort: r.effort });
-      r.sessionId = s.id;
-      r.state = 'started';
-      const l = this.c.links.find(x => x.id === r.linkId);
-      if (l && !l.sessions.includes(s.id)) l.sessions.push(s.id);
-      if (r.prompt) {
-        const t = { id: rid('t_'), linkId: r.linkId, sessionId: s.id, sessionName: s.name, clientRef: `open:${r.id}`, text: r.prompt, state: 'queued', approvedBy: by, createdAt: now(), files: [] };
-        this.c.turns.push(t);
-        r.turnId = t.id;
-      }
-      this.event('open-started', { request: r.id, session: s.id, by });
-    } catch (e) {
-      r.state = 'failed';
-      r.reason = String(e.message || e);
-    }
-    this.changed();
-  }
-
   // ---------- decisions from the user (IPC, after a click) ----------
   decide({ kind, id, decision, workstreamId, text }) {
     if (kind === 'link') {
@@ -332,12 +277,6 @@ class Cowork extends EventEmitter {
         Object.assign(t, { state: 'queued', approvedBy: 'user' });
       } else this.finish(t, 'rejected', { reason: 'The user rejected this prompt in polycli' }, false);
       this.event('turn-decision', { turn: t.id, decision });
-    } else if (kind === 'open') {
-      const r = this.c.requests.find(x => x.id === id && x.state === 'awaiting-approval');
-      if (!r) throw new Error('This request is no longer waiting for approval');
-      if (decision === 'approve') { r.state = 'approved'; this.startRequest(r, 'user'); }
-      else { r.state = 'rejected'; r.reason = 'The user rejected the new session in polycli'; }
-      this.event('open-decision', { request: r.id, decision });
     } else throw new Error('unknown decision');
     this.changed();
   }
@@ -354,7 +293,6 @@ class Cowork extends EventEmitter {
     if (!l) throw new Error('unknown link');
     Object.assign(l, { state: 'revoked', decidedAt: now() });
     for (const t of this.c.turns) if (t.linkId === l.id && ['awaiting-approval', 'queued'].includes(t.state)) this.finish(t, 'rejected', { reason: 'The link was revoked' }, false);
-    for (const r of this.c.requests) if (r.linkId === l.id && r.state === 'awaiting-approval') { r.state = 'rejected'; r.reason = 'The link was revoked'; }
     this.event('link-revoked', { link: l.id });
     this.changed();
   }
@@ -494,10 +432,7 @@ class Cowork extends EventEmitter {
       mutedUntil: this.c.mutedUntil && this.c.mutedUntil > now() ? this.c.mutedUntil : null,
       pendingLinks,
       links: this.c.links.filter(l => l.state === 'active' || l.state === 'revoked').map(l => ({ id: l.id, title: l.title, workstreamId: l.workstreamId, state: l.state, createdAt: l.createdAt, sessions: l.sessions })),
-      approvals: [
-        ...this.c.turns.filter(t => t.state === 'awaiting-approval').map(t => ({ kind: 'turn', id: t.id, linkTitle: linkTitle(t.linkId), sessionId: t.sessionId, sessionName: t.sessionName, firstLine: this.prefixFor(t, 'user'), text: t.text, forced: MODE_PREFIX.test(t.text), createdAt: t.createdAt })),
-        ...this.c.requests.filter(r => r.state === 'awaiting-approval').map(r => ({ kind: 'open', id: r.id, linkTitle: linkTitle(r.linkId), workstreamId: r.workstreamId, role: r.role, cwd: r.cwd, model: r.model, effort: r.effort, prompt: r.prompt, createdAt: r.createdAt })),
-      ],
+      approvals: this.c.turns.filter(t => t.state === 'awaiting-approval').map(t => ({ kind: 'turn', id: t.id, linkTitle: linkTitle(t.linkId), sessionId: t.sessionId, sessionName: t.sessionName, firstLine: this.prefixFor(t, 'user'), text: t.text, forced: MODE_PREFIX.test(t.text), createdAt: t.createdAt })),
       turns: this.c.turns.slice(-60).map(t => ({ id: t.id, linkTitle: linkTitle(t.linkId), sessionId: t.sessionId, sessionName: t.sessionName, state: t.state, text: clip(t.text, 400), response: clip(t.response || '', 400), reason: t.reason || null, waitReason: t.waitReason || null, createdAt: t.createdAt, endedAt: t.endedAt || null })),
       artifacts: this.c.artifacts.slice(-300).map(a => ({ ...a, linkTitle: linkTitle(a.linkId) })),
     };
