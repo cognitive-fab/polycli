@@ -29,6 +29,10 @@ const DOC_EXT = /\.(md|html?|pdf|docx?|pptx?|xlsx?|csv|txt)$/i;
 const POLL_MS = 5000;
 const GIT_STALE_MS = 20000;   // background refresh of the git line for open sessions
 const PR_STALE_MS = 60000;    // gh pr view is slower; refreshed less often
+const PROMPT_MAX = 8000;              // characters kept per prompt
+const PROMPT_KEEP = 200;              // prompts kept per session
+const PROMPT_FILE_MAX = 1 << 20;      // the file is cut back to PROMPT_KEEP lines past this size
+const promptFile = id => path.join(paths.prompts, `${id}.jsonl`);
 const dirKey = d => path.resolve(d).toLowerCase();
 // `claude agents --json`: a session whose process runs has a `pid` and a `status`
 // (idle / busy). `state` is the task state shown in agent view: blocked (waiting for
@@ -38,9 +42,10 @@ const dirKey = d => path.resolve(d).toLowerCase();
 // reads `blocked`. Ended = no entry, or no pid together with `stopped` / `done`.
 const running = e => !!e && (e.pid != null || !['stopped', 'done'].includes(e.state));
 const waiting = e => e.status === 'idle' || e.state === 'blocked';
-// Pane writes that are not the user typing: focus and SGR mouse reports, and the
-// terminal's replies to queries (DA, DSR, DECRQM, OSC, DCS).
-const NOT_TYPING = /^(?:\x1b\[[IO]|\x1b\[<\d+;\d+;\d+[Mm]|\x1b\[[?>]?[\d;]*[cRn]|\x1b\[\??[\d;]*\$y|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1bP[^\x1b]*\x1b\\)+$/;
+// Pane writes that are not the user typing: focus and SGR mouse reports, the keys that
+// only scroll Claude's transcript (Page Up/Down, Ctrl+Home/End; the prompt list uses
+// them), and the terminal's replies to queries (DA, DSR, DECRQM, OSC, DCS).
+const NOT_TYPING = /^(?:\x1b\[[IO]|\x1b\[[56]~|\x1b\[1;5[FH]|\x1b\[<\d+;\d+;\d+[Mm]|\x1b\[[?>]?[\d;]*[cRn]|\x1b\[\??[\d;]*\$y|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1bP[^\x1b]*\x1b\\)+$/;
 
 const newId = () => crypto.randomUUID();
 const now = () => Date.now();
@@ -100,6 +105,7 @@ class Manager extends EventEmitter {
     this.lastInput = new Map();       // terminal id → time the user last typed in the pane
     this.gitByDir = new Map();        // folder → { info, repo, pr, deploy, at, prAt, busy }; not saved
     this.gitTimers = new Map();       // folder → debounce timer
+    this.nudges = new Map();          // terminal id → resize timers of its latest attach
     pty.on('data', id => this.lastOutput.set(id, now()));
     pty.on('exit', (id, code) => this.onTermExit(id, code));
     pty.on('error', (id, message) => this.onTermExit(id, -1, message));
@@ -259,6 +265,7 @@ class Manager extends EventEmitter {
   setUi(patch) {
     for (const k of ['activeTab', 'collapsed']) if (k in patch) this.state.ui[k] = patch[k];
     if ('theme' in patch && ['system', 'light', 'dark'].includes(patch.theme)) this.state.ui.theme = patch.theme;
+    if ('promptsHidden' in patch) this.state.ui.promptsHidden = !!patch.promptsHidden;
     this.changed();
   }
 
@@ -315,6 +322,20 @@ class Manager extends EventEmitter {
     if (!s.bgId || this.pty.isLive(id)) return;
     this.pty.spawn(id, claude.exe(), ['attach', s.bgId], { cwd: s.cwd, env: cleanEnv(), cols: s.cols || 120, rows: s.rows || 32 });
     s.elsewhere = false;
+    // The pane's size reaches the pty right after the spawn, sometimes before `claude
+    // attach` listens for resizes; it then draws for 120x32 in a bigger pane, garbled.
+    // Resize again once it runs (one row off and back, so it redraws).
+    // A new attach drops the timers of an earlier one on the same terminal.
+    for (const timer of this.nudges.get(id) || []) clearTimeout(timer);
+    const timers = [];
+    this.nudges.set(id, timers);
+    for (const ms of [1500, 4000]) {
+      timers.push(setTimeout(() => {
+        if (!this.pty.isLive(id) || !s.cols || !s.rows) return;
+        this.pty.resize(id, s.cols, Math.max(2, s.rows - 1));
+        timers.push(setTimeout(() => { if (this.pty.isLive(id)) this.pty.resize(id, s.cols, s.rows); }, 150));
+      }, ms));
+    }
     if (['closed', 'detached', 'failed'].includes(s.state)) this.set(s, { state: 'starting' });
     // Attaching to a session that is already running doesn't always produce a
     // statusLine, so settle "starting" from the next polls (see pollOnce).
@@ -395,6 +416,7 @@ class Manager extends EventEmitter {
       await this.detachTerm(`t:${s.id}`);
       this.state.sessions = this.state.sessions.filter(x => x.id !== s.id);
       try { fs.rmSync(path.join(paths.run, `${s.id}.settings.json`), { force: true }); } catch {}
+      try { fs.rmSync(promptFile(s.id), { force: true }); } catch {}
       store.event('session-delete', { session: s.id });
     });
   }
@@ -566,11 +588,14 @@ class Manager extends EventEmitter {
         if (s.state === 'starting' || s.state === 'detached') return this.set(s, { state: 'idle' });
         return this.changed();
       case 'SessionStart':
+        // /clear empties the transcript on screen: earlier prompts can't be scrolled to.
+        if (input.source === 'clear') this.recordPrompt(s, { mark: 'clear' });
         if (!['busy', 'needs-you', 'closed'].includes(s.state)) this.set(s, { state: 'idle' });
         return this.changed();
       case 'UserPromptSubmit':
         this.blockedPolls.delete(s.id);
         s.promptSeq = (s.promptSeq || 0) + 1;
+        if (typeof input.prompt === 'string' && input.prompt.trim()) this.recordPrompt(s, { text: input.prompt });
         return this.set(s, { state: 'busy', attention: null, lastPrompt: clip(input.prompt, 300) });
       case 'Stop':
         this.gitSoon(s);
@@ -697,6 +722,37 @@ class Manager extends EventEmitter {
     if (!target) throw new Error('No deploy command: set one in the workstream settings');
     store.event('deploy', { session: s.id, command: target.command, cwd: target.cwd });
     return this.newShell({ workstreamId: w.id, cwd: target.cwd, run: target.command, name: 'deploy' }).id;
+  }
+
+  // ---------- prompt history ----------
+  // The prompts sent to a session (from UserPromptSubmit, so typed, pasted or relayed
+  // from Cowork), for the list at the right of its pane. Kept in their own file rather than in
+  // state.json, which is rewritten on every change; the record only carries historySeq.
+  recordPrompt(s, entry) {
+    const f = promptFile(s.id);
+    const line = { at: now(), ...entry };
+    if (line.text) {
+      line.text = clip(line.text, PROMPT_MAX);
+      if (line.text.startsWith('[polycli ')) line.cowork = true;
+    }
+    try {
+      fs.appendFileSync(f, JSON.stringify(line) + '\n');
+      if (fs.statSync(f).size > PROMPT_FILE_MAX) {
+        const keep = fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).slice(-PROMPT_KEEP);
+        fs.writeFileSync(f, keep.join('\n') + '\n');
+      }
+    } catch (e) { console.error('prompt history', e.message); }
+    // The renderer fetches the list again when this changes.
+    s.historySeq = (s.historySeq || 0) + 1;
+    this.changed();
+  }
+  prompts(id) {
+    const s = this.session(id);
+    let lines = [];
+    try { lines = fs.readFileSync(promptFile(s.id), 'utf8').split('\n').filter(Boolean); } catch {}
+    const out = [];
+    for (const l of lines.slice(-PROMPT_KEEP)) { try { out.push(JSON.parse(l)); } catch {} }
+    return out;
   }
 
   readTranscriptHeader(s) {

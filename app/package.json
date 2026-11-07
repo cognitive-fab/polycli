@@ -1,6 +1,6 @@
 {
   "name": "polycli",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "A Windows terminal for Claude Code workstreams",
   "main": "src/main/main.js",

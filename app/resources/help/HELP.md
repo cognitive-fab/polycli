@@ -23,6 +23,8 @@ A workstream is one piece of work: a name, a color and a main folder. Its Claude
 - **Delete** removes the session and its conversation.
 - Everything Claude Code does works as usual inside the tab. Pressing **←** on an empty prompt opens Claude's agent view.
 
+**Prompts.** The column at the right of a session lists the prompts you sent it, newest first, with the time. Hover one to read it in full; click it to scroll Claude's conversation to it (the prompt line is highlighted for a few seconds). Prompts sent before a `/clear` stay in the list, greyed out. **›** hides the column for every session and **‹** brings it back. The list starts with the prompts sent once this version of polycli runs.
+
 ## The session header
 
 ![Session header](header.png)
@@ -96,6 +98,10 @@ Cowork tasks can work with your polycli sessions: link to a workstream, send pro
 **Policies** (workstream **⚙ Settings**): prompts from Cowork can be sent without asking, and new sessions it requests can start without asking (only in the workstream folder). Prompts that start with `!`, `/`, `#` or `@` always ask.
 
 The **Cowork** panel of a workstream lists the linked tasks (with **Revoke**), the artifacts and documents they reported (**Open link**, **Show file**), and their recent prompts and answers.
+
+## Start with Windows
+
+**⚙** in the top bar → **Start polycli when I sign in to Windows**. The Claude sessions that were open are reattached when polycli starts; after a restart of Windows they start again with their conversation.
 
 ## Themes
 

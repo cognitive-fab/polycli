@@ -311,7 +311,9 @@ function renderPanes() {
       pane = document.createElement('section');
       pane.className = 'pane';
       pane.dataset.tab = t.id;
-      pane.innerHTML = `<div class="pane-top"></div><div class="term"></div>`;
+      pane.innerHTML = t.kind === 'claude'
+        ? `<div class="pane-top"></div><div class="pane-body"><div class="term"></div><aside class="prompts"></aside></div>`
+        : `<div class="pane-top"></div><div class="term"></div>`;
       panes.appendChild(pane);
     }
     wanted.add(t.id);
@@ -331,6 +333,7 @@ function renderPanes() {
           <button class="btn danger" data-act="delete" title="Delete the session and its conversation">Delete</button>
         </div></div>${noticeFor(s)}`;
       top.dataset.session = s.id;
+      renderPrompts(pane, s);
       const live = trust ? s.trustLive : s.termLive;
       showTerm(pane, termId, live || terms.has(termId), live ? '' : s.elsewhere ? 'Attached in another terminal.' : s.state === 'starting' ? 'Starting the session…' : s.state === 'closed' ? 'Closed. Reopen it from the Closed list.' : 'Not attached.');
     } else {
@@ -391,7 +394,7 @@ function mountTerm(host, termId) {
   const fit = new FitAddon();
   term.loadAddon(fit);
   term.open(host);
-  const t = { term, fit, el: host, ro: null, ready: false, queue: [] };
+  const t = { term, fit, el: host, ro: null, ready: false, queue: [], mouse: { tracking: false, sgr: false } };
   terms.set(termId, t);
   term.onData(d => api.write(termId, d));
   // Copy and paste work like Windows Terminal: drag selects, Ctrl+C copies when there
@@ -408,7 +411,7 @@ function mountTerm(host, termId) {
     }
     return true;
   });
-  if (!termId.startsWith('h:')) keepSelectionLocal(term);
+  if (!termId.startsWith('h:')) keepSelectionLocal(term, t.mouse);
   pasteFilesAsPaths(host, term);
   // OSC 52: a program in the terminal sets the clipboard. Writes only; requests to
   // read the clipboard are ignored, and so is the scrollback replayed on mount.
@@ -470,16 +473,15 @@ function pasteFilesAsPaths(host, term) {
 // In Claude panes polycli keeps mouse reporting off (drag selects, as in a plain
 // terminal) and still forwards the wheel, so Claude's transcript scrolls.
 const MOUSE_MODES = new Set([9, 1000, 1001, 1002, 1003, 1005, 1006, 1015, 1016]);
-function keepSelectionLocal(term) {
-  let tracking = false, sgr = false;
+function keepSelectionLocal(term, mouse) {
   const num = p => (Array.isArray(p) ? p[0] : p);
   const track = final => params => {
-    const mouse = params.filter(p => MOUSE_MODES.has(num(p)));
-    if (!mouse.length) return false;
+    const modes = params.filter(p => MOUSE_MODES.has(num(p)));
+    if (!modes.length) return false;
     const on = final === 'h';
-    for (const p of mouse) {
-      if ([1000, 1002, 1003].includes(num(p))) tracking = on;
-      if (num(p) === 1006) sgr = on;
+    for (const p of modes) {
+      if ([1000, 1002, 1003].includes(num(p))) mouse.tracking = on;
+      if (num(p) === 1006) mouse.sgr = on;
     }
     // Mouse modes are swallowed, so xterm never enters mouse mode; any other modes in
     // the same sequence (e.g. CSI ? 1000;2004 h) are passed on.
@@ -492,7 +494,7 @@ function keepSelectionLocal(term) {
   // Wheel reports are sent in SGR encoding (what Claude Code asks for); for any other
   // encoding the wheel keeps xterm's default behavior.
   term.attachCustomWheelEventHandler(e => {
-    if (!tracking || !sgr || e.shiftKey || !e.deltaY) return true;
+    if (!mouse.tracking || !mouse.sgr || e.shiftKey || !e.deltaY) return true;
     const r = term.element.querySelector('.xterm-screen').getBoundingClientRect();
     const col = Math.min(term.cols, Math.max(1, Math.ceil((e.clientX - r.left) / (r.width / term.cols))));
     const row = Math.min(term.rows, Math.max(1, Math.ceil((e.clientY - r.top) / (r.height / term.rows))));
@@ -501,6 +503,271 @@ function keepSelectionLocal(term) {
     e.preventDefault();
     return false;
   });
+}
+
+// ---------------- prompt list at the right of a Claude pane ----------------
+// The prompts sent to the session (main records them from UserPromptSubmit). Hover
+// shows the whole prompt; a click scrolls Claude's transcript to it.
+const promptCache = new Map();   // session id → { seq, list, loading }
+let promptTip = null;
+
+function promptLabel(p) {
+  let t = p.text || '';
+  if (p.cowork) t = t.replace(/^\[polycli [^\]]*\][^\n]*?Please handle it:\s*/, '');
+  return t.replace(/<\/?pasted_content[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function promptTime(at) {
+  const d = new Date(at), today = new Date().toDateString() === d.toDateString();
+  const hm = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return today ? hm : `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${hm}`;
+}
+
+function renderPrompts(pane, s) {
+  const box = pane.querySelector('.prompts');
+  if (!box) return;
+  const seq = s.historySeq || 0;
+  let c = promptCache.get(s.id);
+  if (!c) { c = { seq: -1, list: [], loading: false }; promptCache.set(s.id, c); }
+  if (c.seq !== seq && !c.loading) {
+    c.loading = true;
+    const want = seq;
+    call('prompts', { id: s.id }).then(list => { c.list = list; c.seq = want; }).catch(() => { c.seq = want; })
+      .finally(() => {
+        c.loading = false;
+        const cur = S.sessions.find(x => x.id === s.id);
+        if (cur && document.body.contains(pane)) renderPrompts(pane, cur);
+      });
+  }
+  const hidden = !!S.ui.promptsHidden;
+  const key = `${hidden}:${c.seq}`;
+  if (box.dataset.drawn === key) return;
+  box.dataset.drawn = key;
+  box.classList.toggle('hidden', hidden);
+  if (hidden) {
+    box.innerHTML = `<button class="icon-btn" data-act="prompts-toggle" title="Show the prompts sent to this session">‹</button>`;
+    return;
+  }
+  const lastClear = c.list.map(p => !!p.mark).lastIndexOf(true);
+  const items = [];
+  c.list.forEach((p, i) => {
+    if (p.mark === 'clear') { items.push(`<div class="prompt-sep">/clear</div>`); return; }
+    if (!p.text) return;
+    const gone = i < lastClear;
+    items.push(`<button class="prompt-item${p.cowork ? ' cowork' : ''}${gone ? ' gone' : ''}" data-prompt="${i}"><span class="pt">${esc(promptLabel(p).slice(0, 160))}</span><span class="pm">${esc(promptTime(p.at))}</span></button>`);
+  });
+  box.innerHTML = `<div class="prompts-head"><span>Prompts</span><button class="icon-btn" data-act="prompts-toggle" title="Hide the prompt list">›</button></div>
+    <div class="prompts-list">${items.length ? items.reverse().join('') : '<div class="prompts-empty">The prompts you send to this session are listed here, newest first. Hover one to read it, click it to scroll to it.</div>'}</div>`;
+}
+
+function promptOf(el) {
+  const pane = el.closest('.pane');
+  const sid = pane?.dataset.tab?.slice(2);
+  const c = sid && promptCache.get(sid);
+  const i = Number(el.dataset.prompt);
+  return c && c.list[i] ? { pane, sid, list: c.list, i, p: c.list[i] } : null;
+}
+
+document.addEventListener('mouseover', e => {
+  const el = e.target.closest?.('.prompt-item');
+  if (!el) return;
+  const x = promptOf(el);
+  if (!x) return;
+  if (!promptTip) { promptTip = document.createElement('div'); promptTip.className = 'prompt-tip'; document.body.appendChild(promptTip); }
+  const text = (x.p.text || '').replace(/<\/?pasted_content[^>]*>/g, '').trim();
+  const lastClear = x.list.map(p => !!p.mark).lastIndexOf(true);
+  promptTip.innerHTML = `<div class="tip-body">${esc(text.length > 3000 ? text.slice(0, 3000) + '…' : text)}</div><small>${esc(promptTime(x.p.at))} · ${x.i < lastClear ? 'Before /clear: no longer in the transcript' : 'Click to scroll to it'}</small>`;
+  promptTip.hidden = false;
+  const body = promptTip.firstElementChild;
+  body.classList.toggle('clipped', body.scrollHeight > body.clientHeight);
+  const r = el.getBoundingClientRect();
+  promptTip.style.top = '0px';
+  const { width: w, height: h } = promptTip.getBoundingClientRect();
+  promptTip.style.left = `${Math.max(8, r.left - w - 8)}px`;
+  promptTip.style.top = `${Math.max(8, Math.min(r.top, window.innerHeight - h - 8))}px`;
+});
+document.addEventListener('mouseout', e => {
+  if (promptTip && e.target.closest?.('.prompt-item') && !e.relatedTarget?.closest?.('.prompt-item')) promptTip.hidden = true;
+});
+
+async function promptClick(el) {
+  const x = promptOf(el);
+  if (!x) return;
+  if (promptTip) promptTip.hidden = true;
+  const lastClear = x.list.map(p => !!p.mark).lastIndexOf(true);
+  if (x.i < lastClear) return toast('This prompt was sent before /clear; it is no longer in the transcript.');
+  const t = terms.get(`s:${x.sid}`);
+  if (!t || !t.ready) return toast('The session is not attached.');
+  // Paging keys would move the selection of a permission prompt or menu instead.
+  if (S.sessions.find(q => q.id === x.sid)?.state === 'needs-you') return toast('Answer Claude first; the transcript scrolls once the prompt is gone.');
+  el.classList.add('seeking');
+  try {
+    const found = await seekPrompt(t, x.list, x.i);
+    if (!found) toast("Couldn't find this prompt in Claude's transcript. It may be from before a compaction.");
+  } finally {
+    el.classList.remove('seeking');
+    t.term.focus();
+  }
+}
+
+// How a prompt shows in Claude's transcript: a row starting with ❯, then the prompt
+// (wrapped over the next rows). Compared without whitespace, since wrapping and
+// indentation change it.
+const squash = s => s.replace(/[\s\u00a0]+/g, '');
+// Pasted text comes wrapped in <pasted_content> tags, which the transcript doesn't show.
+function promptMatcher(text) {
+  const t = String(text || '').replace(/<\/?pasted_content[^>]*>/g, '').replace(/^\s+/, '');
+  const first = t.split('\n')[0];
+  const whole = squash(first);
+  // A short first line must match the whole row: "yes" must not find "yes, and also…".
+  return whole.length <= 40 && first.length < 60 ? { exact: whole } : { prefix: whole.slice(0, 40) };
+}
+const sameMatcher = (a, b) => a.exact === b.exact && a.prefix === b.prefix;
+
+function screenRows(term) {
+  const b = term.buffer.active, rows = [];
+  for (let i = 0; i < term.rows; i++) rows.push((b.getLine(b.viewportY + i)?.translateToString(true) || '').replace(/\u00a0/g, ' ').trimEnd());
+  return rows;
+}
+// The transcript ends above Claude's input box, which sits between two ── rules (the
+// upper one can carry the session's name).
+function transcriptEnd(rows) {
+  const rules = rows.map((r, i) => (/^─{10,}/.test(r.trim()) ? i : -1)).filter(i => i >= rows.length - 20 && i >= 0);
+  return rules.length >= 2 ? rules[rules.length - 2] : rules.length ? rules[0] : rows.length;
+}
+// The top row is skipped on Claude's screen: while a prompt's answer is in view, Claude
+// pins a copy of the prompt there.
+function matchRows(rows, m, end = transcriptEnd(rows), from = 1) {
+  const out = [];
+  for (let i = from; i < end; i++) {
+    if (!rows[i].startsWith('❯')) continue;
+    const head = squash(rows[i].slice(1));
+    if (m.exact !== undefined ? head === m.exact : squash([rows[i].slice(1), ...rows.slice(i + 1, Math.min(end, i + 5))].join(' ')).startsWith(m.prefix)) out.push(i);
+  }
+  return out;
+}
+
+// Resolves when Claude has redrawn after input: shortly after the last write, or at a cap.
+// With no redraw at all (already at the end), it waits `idle`.
+function settle(t, idle = 700, cap = 1500) {
+  return new Promise(res => {
+    let quiet;
+    const done = () => { sub.dispose(); clearTimeout(quiet); clearTimeout(limit); res(); };
+    const sub = t.term.onWriteParsed(() => { clearTimeout(quiet); quiet = setTimeout(done, 80); });
+    quiet = setTimeout(done, idle);
+    const limit = setTimeout(done, cap);
+  });
+}
+const seekLog = [];   // the last search's steps, for the smoke test
+// Keys Claude Code's fullscreen view scrolls its transcript with: Page Up moves it by
+// half a screen, Ctrl+End goes to the newest message.
+const KEY = { pageUp: '\x1b[5~', end: '\x1b[1;5F' };
+async function sendKey(t, seq, idle) {
+  if (seq) t.term.input(seq, false);
+  await settle(t, idle, (idle || 700) + 800);
+}
+// Claude shows "Jump to bottom (ctrl+End)" while its transcript is scrolled up.
+async function toNewest(t) {
+  let rows = screenRows(t.term);
+  for (let k = 0; k < 4; k++) {
+    await sendKey(t, KEY.end, 500 + k * 300);
+    const n = screenRows(t.term);
+    const settled = sameRows(n, rows);
+    rows = n;
+    if (settled && !rows.some(r => /Jump to bottom/.test(r))) break;
+  }
+  return rows;
+}
+const sameRows = (a, b) => a.length === b.length && a.every((r, i) => r === b[i]);
+// How far the transcript moved down between two screens: b[i + d] === a[i].
+function shiftOf(a, b, end) {
+  let best = null, score = 2;
+  for (let d = 1; d < end; d++) {
+    let n = 0;
+    for (let i = 0; i + d < end; i++) if (a[i] && a[i] === b[i + d]) n++;
+    if (n > score) { score = n; best = d; }
+  }
+  return best;
+}
+
+// Claude Code draws its own scrollable transcript in the alternate screen, so xterm
+// has no scrollback to search: polycli pages Claude's transcript up from the newest
+// message, as the keyboard does, until the prompt's row shows. Later prompts with the
+// same text are counted on the way, so "yes" finds the right "yes".
+async function seekPrompt(t, list, idx) {
+  if (t.seeking) return true;
+  t.seeking = true;
+  try {
+    const term = t.term;
+    const m = promptMatcher(list[idx].text);
+    let later = 0;
+    for (const p of list.slice(idx + 1)) { if (p.mark === 'clear') later = 0; else if (p.text && sameMatcher(promptMatcher(p.text), m)) later++; }
+    seekLog.length = 0;
+    seekLog.push({ m, later, type: term.buffer.active.type });
+    const mark = row => {
+      const r = screenRows(term)[row] || '';
+      term.select(0, term.buffer.active.viewportY + row, Math.max(1, r.length));
+      const sel = term.getSelection();
+      setTimeout(() => { if (term.getSelection() === sel) term.clearSelection(); }, 4000);
+    };
+    if (term.buffer.active.type === 'normal') {
+      // Claude without its fullscreen view: the transcript is in xterm's scrollback.
+      const b = term.buffer.active, hits = [];
+      const line = i => (b.getLine(i)?.translateToString(true) || '').replace(/\u00a0/g, ' ').trimEnd();
+      // Stop above Claude's input box on the last screen, so a matching draft isn't a hit.
+      const last = b.baseY + transcriptEnd(Array.from({ length: term.rows }, (_, k) => line(b.baseY + k)));
+      for (let i = 0; i < last; i++) {
+        if (!line(i).startsWith('❯')) continue;
+        const near = Array.from({ length: Math.min(5, last - i) }, (_, k) => line(i + k));
+        if (matchRows(near, m, near.length, 0)[0] === 0) hits.push(i);
+      }
+      const at = hits[hits.length - 1 - later];
+      if (at === undefined) return false;
+      term.scrollToLine(Math.max(0, at - 2));
+      term.select(0, at, line(at).length);
+      return true;
+    }
+    let rows = await toNewest(t);
+    const seen = new Set();
+    let offset = 0;   // how far the transcript has moved down since the newest message
+    const found = (from = 1) => {
+      for (const row of matchRows(rows, m, transcriptEnd(rows), from).reverse()) {   // bottom to top
+        if (seen.has(row - offset)) continue;
+        seen.add(row - offset);
+        if (seen.size > later) return row;
+      }
+      return null;
+    };
+    seekLog.push({ bottom: rows.map((r, j) => (r.startsWith('❯') ? `${j}:${r.slice(0, 20)}` : null)).filter(Boolean), last: rows.slice(-8, -5) });
+    let row = found(), step = null;
+    for (let i = 0; row === null && i < 3000; i++) {
+      const end = transcriptEnd(rows);
+      // Claude can take a moment to answer a key (after a turn, while its hooks run):
+      // no change means the top only once the key was tried a few times.
+      let n = rows;
+      for (let k = 0; k < 4 && sameRows(n, rows); k++) {
+        await sendKey(t, k % 2 ? '' : KEY.pageUp, 700 + k * 300);
+        n = screenRows(term);
+      }
+      // At the top of the transcript nothing is pinned: the first row counts too.
+      if (sameRows(n, rows)) { row = found(0); break; }
+      const sd = shiftOf(rows, n, end);
+      const d = sd ?? step ?? Math.floor(end / 2);
+      seekLog.push({ end, d, sd, marks: n.map((r, j) => (r.startsWith('❯') ? `${j}:${r.slice(0, 20)}` : null)).filter(Boolean) });
+      step ??= d;
+      offset += d;
+      rows = n;
+      row = found();
+    }
+    if (row === null) {
+      await toNewest(t);
+      return false;
+    }
+    mark(row);
+    return true;
+  } finally {
+    t.seeking = false;
+  }
 }
 
 function fitTerm(t) {
@@ -743,6 +1010,19 @@ function markdown(src) {
   flush();
   return out.join('\n');
 }
+async function appSettingsDialog() {
+  const li = await call('loginItem');
+  const form = modal(`<h3>polycli settings</h3>
+    <label class="check-row"><input type="checkbox" name="login" ${li.on ? 'checked' : ''}><span>Start polycli when I sign in to Windows</span></label>
+    <p class="hint">${li.packaged ? '' : 'polycli runs from source here, so Windows starts Electron with this app folder; Startup apps in Windows Settings lists it as Electron. '}Claude sessions that were open are reattached when it starts; after a restart of Windows they start again with their conversation.</p>
+    <div class="modal-actions"><button type="button" class="btn" data-cancel>Cancel</button><button class="btn primary">Save</button></div>`,
+  async fd => {
+    const on = fd.get('login') === 'on';
+    if (on !== li.on) { const r = await call('setLoginItem', { on }); toast(r.on ? 'polycli will start when you sign in' : 'polycli will no longer start when you sign in'); }
+  });
+  return form;
+}
+
 async function helpDialog() {
   const md = await call('helpText');
   const form = modal(`<div class="help">${markdown(md)}</div>
@@ -761,6 +1041,8 @@ function openVSCode(args, e) {
 document.addEventListener('click', async e => {
   const cwEl = e.target.closest('[data-cw]');
   if (cwEl) return coworkClick(cwEl);
+  const promptEl = e.target.closest('[data-prompt]');
+  if (promptEl) return promptClick(promptEl);
   const el = e.target.closest('[data-close],[data-tab],[data-select-ws],[data-act],[data-reopen],[data-closed],[data-archived-toggle],[data-restore-ws]');
   if (!el) {
     if (!e.target.closest('.inbox-menu')) $('#inboxMenu').hidden = true;
@@ -792,6 +1074,7 @@ document.addEventListener('click', async e => {
     return;
   }
   const act = el.dataset.act;
+  if (act === 'prompts-toggle') { S.ui.promptsHidden = !S.ui.promptsHidden; render(); return call('setUi', { promptsHidden: S.ui.promptsHidden }); }
   const ws = activeWs();
   const sid = el.closest('[data-session]')?.dataset.session;
   const hid = el.closest('[data-shell]')?.dataset.shell;
@@ -833,6 +1116,7 @@ $('#themeBtn').onclick = () => {
 };
 $('#keysBtn').onclick = () => keysDialog();
 $('#helpBtn').onclick = () => helpDialog();
+$('#appSettingsBtn').onclick = () => appSettingsDialog();
 $('#inboxBtn').onclick = e => { e.stopPropagation(); $('#inboxMenu').hidden = !$('#inboxMenu').hidden; };
 
 api.onState(s => { S = s; render(); });
@@ -848,4 +1132,4 @@ api.onData((termId, data) => {
 });
 
 call('state').then(s => { S = s; render(); });
-window.__polycli = { get state() { return S; }, terms };
+window.__polycli = { get state() { return S; }, terms, seekLog };

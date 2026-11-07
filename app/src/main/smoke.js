@@ -276,21 +276,124 @@ async function runImage({ app, win, manager }) {
   app.exit(report.ok ? 0 : 1);
 }
 
+// Prompt list: prompts are recorded and listed; a click scrolls Claude's fullscreen
+// transcript to the prompt (the right one of two identical prompts), a long paste
+// included; hover shows the whole prompt.
+async function runPrompts({ app, win, manager }) {
+  const report = { phase: 'prompts', clicks: {} };
+  const wc = win.webContents;
+  let sid = null;
+  const js = code => wc.executeJavaScript(code);
+  const T = () => `window.__polycli.terms.get('s:${sid}').term`;
+  // The visible rows, the selected row (relative to the screen) and the selection text.
+  const screen = () => js(`(() => { const t = ${T()}; const b = t.buffer.active; const rows = []; for (let i = 0; i < t.rows; i++) rows.push((b.getLine(b.viewportY + i)?.translateToString(true) || '').replace(/\\u00a0/g, ' ').trimEnd()); const p = t.getSelectionPosition(); return { rows, sel: t.getSelection(), selRow: p ? p.start.y - b.viewportY : null }; })()`);
+  const click = async (i, label) => {
+    await js(`document.querySelector('.pane:not([hidden]) [data-prompt="${i}"]').click()`);
+    await sleep(300);
+    for (let k = 0; k < 240 && await js(`!!document.querySelector('.prompt-item.seeking')`); k++) await sleep(250);
+    const sc = await screen();
+    const below = sc.selRow == null ? [] : sc.rows.slice(sc.selRow + 1).filter(r => r.startsWith('❯')).map(r => r.slice(0, 60));
+    const answer = sc.selRow == null ? '' : sc.rows.slice(sc.selRow + 1, sc.selRow + 10).join(' ');
+    report.clicks[label] = { sel: sc.sel.slice(0, 80), selRow: sc.selRow, nextPrompt: below[0] || null, answer: /alpha-\d/.test(answer) ? 'alpha' : /charlie-\d/.test(answer) ? 'charlie' : null, log: await js('JSON.parse(JSON.stringify(window.__polycli.seekLog))') };
+    console.log('SMOKE click', label, JSON.stringify({ ...report.clicks[label], log: report.clicks[label].log.length }));
+    fs.writeFileSync(path.join(OUT, `prompts-${label}.png`), (await wc.capturePage()).toPNG());
+    return report.clicks[label];
+  };
+  try {
+    const ws = manager.createWorkstream({ name: 'prompts-test', folder: FOLDER });
+    const s = await manager.newSession({ workstreamId: ws.id, role: 'history', model: 'haiku' });
+    sid = s.id;
+    await waitFor(() => manager.session(sid).state === 'idle' && manager.pty.isLive(`s:${sid}`), 60000, 'idle');
+    await sleep(2000);
+    win.show(); win.focus();
+    manager.setUi({ activeTab: `s:${sid}` });
+    for (let i = 0; i < 40; i++) { if (await js(`!!document.querySelector('[data-term="s:${sid}"] .xterm-screen')?.offsetParent`)) break; await sleep(250); }
+    const paste = ['Probe ECHO: a pasted block follows.', ...Array.from({ length: 30 }, (_, i) => `pasted line ${i + 1}`), 'Reply with only the word DONE.'].join('\n');
+    const prompts = [
+      'Probe ALPHA: write alpha-1 to alpha-30, one per line, and nothing else.',
+      'again',
+      'Probe CHARLIE: write charlie-1 to charlie-30, one per line, and nothing else.',
+      'again',
+      paste,
+    ];
+    for (const p of prompts) {
+      const n = manager.prompts(sid).length;
+      for (let k = 0; k < 3 && manager.prompts(sid).length === n; k++) {
+        await manager.submitPrompt(sid, p);
+        await waitFor(() => manager.prompts(sid).length > n, 10000, 'registered').catch(() => {});
+      }
+      await waitFor(() => manager.session(sid).state === 'idle', 90000, 'answer');
+      await waitFor(() => Date.now() - (manager.lastOutput.get(`s:${sid}`) || 0) > 2500, 60000, 'quiet').catch(() => {});
+    }
+    report.size = { pty: [manager.session(sid).cols, manager.session(sid).rows], xterm: await js(`[${T()}.cols, ${T()}.rows]`) };
+    console.log('SMOKE size', JSON.stringify(report.size));
+    report.history = manager.prompts(sid).map(p => (p.text || p.mark).slice(0, 60));
+    for (let i = 0; i < 20 && (await js(`document.querySelectorAll('.pane:not([hidden]) .prompt-item').length`)) < 5; i++) await sleep(250);
+    report.listed = await js(`[...document.querySelectorAll('.pane:not([hidden]) .prompt-item .pt')].map(e => e.textContent.slice(0, 50))`);
+    console.log('SMOKE listed', JSON.stringify(report.listed));
+    report.pasteShown = (await screen()).rows.filter(r => r.startsWith('❯')).map(r => r.slice(0, 70));
+    console.log('SMOKE prompt rows', JSON.stringify(report.pasteShown));
+    fs.writeFileSync(path.join(OUT, 'prompts-list.png'), (await wc.capturePage()).toPNG());
+
+    // Hover: the whole prompt in a tooltip.
+    await js(`document.querySelector('.pane:not([hidden]) [data-prompt="4"]').dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))`);
+    await sleep(200);
+    report.tip = await js(`(() => { const t = document.querySelector('.prompt-tip'); return t && !t.hidden ? t.textContent : null; })()`);
+    report.tipFull = !!report.tip && report.tip.includes('pasted line 30') && report.tip.includes('Reply with only the word DONE');
+    fs.writeFileSync(path.join(OUT, 'prompts-hover.png'), (await wc.capturePage()).toPNG());
+    await js(`document.querySelector('.pane:not([hidden]) [data-prompt="4"]').dispatchEvent(new MouseEvent('mouseout', { bubbles: true }))`);
+
+    // A draft in the input box must survive the paging keys.
+    manager.write(`s:${sid}`, 'again');
+    await sleep(800);
+    const a = await click(0, 'alpha');
+    const g1 = await click(1, 'again-first');
+    const g2 = await click(3, 'again-second');
+    const e = await click(4, 'paste');
+    report.draftKept = (await screen()).rows.some(r => /^❯ again$/.test(r));
+    report.ok = report.history.length === 5 && report.listed.length === 5 && report.tipFull
+      && /Probe ALPHA/.test(a.sel)
+      && /^❯ again/.test(g1.sel) && (g1.answer === 'alpha' || /Probe CHARLIE/.test(g1.nextPrompt || ''))
+      && /^❯ again/.test(g2.sel) && (g2.answer === 'charlie' || /Probe ECHO/.test(g2.nextPrompt || ''))
+      && /Probe ECHO/.test(e.sel) && report.draftKept;
+
+    // Hide and show the list.
+    await js(`document.querySelector('.pane:not([hidden]) [data-act="prompts-toggle"]').click()`);
+    await sleep(400);
+    report.hidden = await js(`document.querySelector('.pane:not([hidden]) .prompts').classList.contains('hidden')`);
+    await js(`document.querySelector('.pane:not([hidden]) [data-act="prompts-toggle"]').click()`);
+    await sleep(400);
+    report.ok = report.ok && report.hidden;
+  } catch (e) {
+    report.ok = false;
+    report.error = String(e.stack || e);
+  }
+  if (sid) { try { await manager.deleteSession(sid); } catch {} }
+  fs.writeFileSync(path.join(OUT, 'prompts.json'), JSON.stringify(report, null, 2));
+  app.exit(report.ok ? 0 : 1);
+}
+
 // Screenshots of the workstream settings and Keys dialogs (no Claude session needed).
 async function runUi({ app, win, manager }) {
   const report = { phase: 'ui' };
   const wc = win.webContents;
   const shot = async name => { await sleep(700); fs.writeFileSync(path.join(OUT, `ui-${name}.png`), (await wc.capturePage()).toPNG()); };
+  const el = async sel => { for (let i = 0; i < 100 && !(await wc.executeJavaScript(`!!document.querySelector(${JSON.stringify(sel)})`)); i++) await sleep(100); };
   try {
     const ws = manager.createWorkstream({ name: 'ui-test', folder: FOLDER });
     manager.updateWorkstream({ id: ws.id, env: [{ name: 'POLYWORLD_API_KEY', value: 'x' }, { name: 'MY_SERVICE_URL', value: 'y' }], uses: ['FRED_API_KEY'] });
-    await sleep(800);
+    await el('[data-act="wsSettings"]');
     await wc.executeJavaScript(`document.querySelector('[data-act="wsSettings"]').click()`);
-    await sleep(800);
+    await el('#envAdd');
     await wc.executeJavaScript(`(() => { document.querySelector('#envAdd').click(); const r = [...document.querySelectorAll('.env-row')].pop(); r.querySelector('.env-name').value = 'ANTHROPIC_API_KEY'; r.querySelector('.env-name').dispatchEvent(new Event('input', { bubbles: true })); })()`);
     await shot('settings');
     report.settingsRows = await wc.executeJavaScript(`document.querySelectorAll('.env-row').length`);
     report.warning = await wc.executeJavaScript(`document.querySelector('#envWarn').textContent`);
+    await wc.executeJavaScript(`document.querySelector('[data-cancel]').click()`);
+    await wc.executeJavaScript(`document.querySelector('#appSettingsBtn').click()`);
+    for (let i = 0; i < 40 && !(await wc.executeJavaScript(`!!document.querySelector('#modal [name="login"]')`)); i++) await sleep(100);
+    await shot('app-settings');
+    report.loginRow = await wc.executeJavaScript(`!!document.querySelector('#modal [name="login"]')`);
     await wc.executeJavaScript(`document.querySelector('[data-cancel]').click()`);
     await wc.executeJavaScript(`document.querySelector('#keysBtn').click()`);
     await sleep(800);
@@ -302,10 +405,12 @@ async function runUi({ app, win, manager }) {
     manager.setActive(ws.id);
     manager.newShell({ workstreamId: ws.id });
     await sleep(800);
+    await el('[data-act="wsSettings"]');
     await wc.executeJavaScript(`document.querySelector('[data-act="wsSettings"]').click()`);
-    await sleep(800);
+    await el('#wsArchive');
     await wc.executeJavaScript(`document.querySelector('#wsArchive').click()`);
-    await sleep(500);
+    await el('#modal .modal-actions .primary');
+    await sleep(300);
     report.archiveText = await wc.executeJavaScript(`document.querySelector('#modal p').textContent`);
     await wc.executeJavaScript(`document.querySelector('#modal .modal-actions .primary').click()`);
     await waitFor(() => manager.ws(ws.id).archived, 10000, 'archived');
@@ -532,6 +637,7 @@ async function run(ctx) {
   if (process.env.POLYCLI_SMOKE === 'ui') return runUi(ctx);
   if (process.env.POLYCLI_SMOKE === 'clip') return runClip(ctx);
   if (process.env.POLYCLI_SMOKE === 'image') return runImage(ctx);
+  if (process.env.POLYCLI_SMOKE === 'prompts') return runPrompts(ctx);
   if (process.env.POLYCLI_SMOKE === 'needs') return runNeeds(ctx);
   if (process.env.POLYCLI_SMOKE === 'launch') return runLaunch(ctx);
   if (process.env.POLYCLI_SMOKE === 'verify') return runVerify(ctx);

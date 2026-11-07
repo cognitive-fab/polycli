@@ -1,5 +1,6 @@
 // npm run persist: hard-kills polycli's main process while a session runs, starts
 // polycli again, and checks the session was reattached and still answers.
+// POLYCLI_PERSIST_STOP=1 also stops the session in between, as a reboot would.
 const { spawn, execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -34,6 +35,13 @@ const agentState = bgId => {
   execFileSync('taskkill', ['/F', '/PID', String(mainPid)]);   // main process only, no /T
   await sleep(4000);
   console.log('after hard kill of polycli:', agentState(bgId));
+  // POLYCLI_PERSIST_STOP=1: the session is stopped as well, as after a reboot.
+  if (process.env.POLYCLI_PERSIST_STOP) {
+    const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^CLAUDE/.test(k)));
+    try { execFileSync(claudeExe, ['stop', bgId], { env, stdio: 'ignore' }); } catch {}
+    await sleep(3000);
+    console.log('after claude stop:', agentState(bgId));
+  }
   try { execFileSync('taskkill', ['/F', '/T', '/PID', String(first.pid)], { stdio: 'ignore' }); } catch {}
   await sleep(1000);
   const second = spawn(electron, [root], { env: { ...base, POLYCLI_SMOKE: 'verify' }, stdio: 'ignore' });

@@ -141,7 +141,28 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .notice.err { background: #f06a6a14; color: var(--bad); }
 .notice.info { background: #7c8cf814; color: var(--text-dim); }
 .notice .grow { flex: 1; }
-.term { flex: 1; min-height: 0; background: var(--bg-term); }
+.term { flex: 1; min-height: 0; min-width: 0; background: var(--bg-term); }
+/* Claude panes: the prompts sent to the session, at the right of the terminal. */
+.pane-body { flex: 1; min-height: 0; display: flex; }
+.prompts { flex: none; width: 210px; display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--bg-rail); min-height: 0; }
+.prompts.hidden { width: 26px; align-items: center; padding-top: 6px; }
+.prompts-head { display: flex; align-items: center; justify-content: space-between; padding: 6px 6px 6px 10px; color: var(--text-dim); font-size: 12px; border-bottom: 1px solid var(--line); }
+.prompts-list { flex: 1; overflow-y: auto; padding: 4px; }
+.prompts-empty { color: var(--text-faint); font-size: 12px; padding: 8px 6px; line-height: 1.4; }
+.prompt-item { display: block; width: 100%; text-align: left; background: none; border: 0; border-radius: 6px; padding: 5px 6px; color: var(--text); font-size: 12px; cursor: pointer; }
+.prompt-item:hover { background: var(--bg-hover); }
+.prompt-item .pt { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; line-height: 1.35; }
+.prompt-item .pm { display: block; color: var(--text-faint); font-size: 11px; margin-top: 1px; }
+.prompt-item.cowork .pt::before { content: "◇ "; color: var(--accent); }
+.prompt-item.gone { color: var(--text-faint); }
+.prompt-item.seeking { outline: 1px dashed var(--accent); }
+.prompt-sep { color: var(--text-faint); font-size: 11px; text-align: center; padding: 4px 0; border-top: 1px dashed var(--line); margin: 4px 6px; }
+.prompt-tip { position: fixed; z-index: 40; max-width: 520px; max-height: 60vh; display: flex; flex-direction: column; background: var(--bg-elev); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; box-shadow: 0 10px 30px #0008; pointer-events: none; }
+.prompt-tip[hidden] { display: none; }
+.prompt-tip .tip-body { min-height: 0; overflow: hidden; font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+.prompt-tip .tip-body.clipped { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent); }
+.prompt-tip small { flex: none; margin-top: 6px; color: var(--text-faint); }
+.check-row { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 8px; }
 /* The padding sits on .xterm, not on .term: the fit addon subtracts the terminal
    element's padding but takes the container's full height, so padding on the
    container made it fit one row too many and clipped the bottom line. */

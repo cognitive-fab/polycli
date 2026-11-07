@@ -140,6 +140,9 @@ const OPS = {
   restartShell: a => manager.restartShell(a.id),
   closeShell: a => manager.closeShell(a.id),
   scrollback: a => manager.pty.scrollback(String(a.term)),
+  prompts: a => manager.prompts(a.id),
+  loginItem: () => loginItem(),
+  setLoginItem: a => loginItem(!!a.on),
   openVSCode: async a => { await vscode.open(vscodeTarget(a), { mode: a.mode === 'new' ? 'new' : 'reuse', root: !!a.root }); },
   copyText: a => clipboard.writeText(String(a.text ?? '').slice(0, 1 << 20)),
   savePastedImage: a => savePastedImage(a),
@@ -148,6 +151,15 @@ const OPS = {
     return r.canceled ? null : r.filePaths[0];
   },
 };
+
+// Start polycli when the user signs in to Windows (HKCU Run entry, named after the
+// AppUserModelId). From source, that runs Electron with the app folder, as npm start
+// does but without a console window.
+function loginItem(on) {
+  const opts = { path: process.execPath, args: app.isPackaged ? [] : [app.getAppPath()] };
+  if (on !== undefined) app.setLoginItemSettings({ ...opts, openAtLogin: on });
+  return { on: app.getLoginItemSettings(opts).openAtLogin, packaged: app.isPackaged };
+}
 
 function wireIpc() {
   ipcMain.handle('polycli', async (_e, op, args) => {
