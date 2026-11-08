@@ -281,9 +281,10 @@ class Manager extends EventEmitter {
     if (patch.split && typeof patch.split === 'object') {
       const p = patch.split;
       const id = v => (typeof v === 'string' && v.length < 80 ? v : null);
+      const layout = [1, 2, 4].includes(p.layout) ? p.layout : 1;
       this.state.ui.split = {
-        layout: [1, 2, 4].includes(p.layout) ? p.layout : 1,
-        focus: Number.isInteger(p.focus) && p.focus >= 0 && p.focus < 4 ? p.focus : 0,
+        layout,
+        focus: Number.isInteger(p.focus) && p.focus >= 0 && p.focus < layout ? p.focus : 0,
         slots: Array.from({ length: 4 }, (_, i) => ({ ws: id(p.slots?.[i]?.ws), tab: id(p.slots?.[i]?.tab) })),
       };
     }

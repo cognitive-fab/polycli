@@ -367,10 +367,20 @@ function slotPlan() {
   const sp = splitState();
   const used = new Set();
   const plan = [];
-  for (const i of [sp.focus, ...[...Array(sp.layout).keys()].filter(k => k !== sp.focus)]) {
+  // Who gets a contested tab: the focused pane when the active tab names one of its tabs
+  // (a tab or session was clicked). Otherwise unfocused panes keep the tab they show, the
+  // focused pane comes next, and panes with no tab yet (just added) take what is left.
+  const fws = activeWs();
+  const ftabs = fws ? tabsOf(fws.id) : [];
+  const sel = normTab(S.ui.activeTab);
+  const explicit = ftabs.some(t => t.id === sel);
+  const others = [...Array(sp.layout).keys()].filter(k => k !== sp.focus);
+  const holds = k => { const w = sp.slots[k].ws; return !!w && tabsOf(w).some(t => t.id === normTab(sp.slots[k].tab)); };
+  const order = explicit ? [sp.focus, ...others] : [...others.filter(holds), sp.focus, ...others.filter(k => !holds(k))];
+  for (const i of order) {
     const ws = i === sp.focus ? activeWs() : liveWorkstreams().find(w => w.id === sp.slots[i].ws) || null;
     const tabs = ws ? tabsOf(ws.id) : [];
-    const want = i === sp.focus ? currentTab(tabs) : normTab(sp.slots[i].tab);
+    const want = i === sp.focus ? (explicit ? sel : null) : normTab(sp.slots[i].tab);
     let tab = tabs.some(t => t.id === want) && !used.has(want) ? want : null;
     if (!tab) tab = tabs.find(t => !used.has(t.id))?.id || null;
     if (tab) used.add(tab);
@@ -388,8 +398,9 @@ function saveSplit(sp) { S.ui.split = sp; return call('setUi', { split: sp }); }
 function loadSlot(slot) {
   if (!slot.ws || !liveWorkstreams().some(w => w.id === slot.ws)) return;
   S.ui.activeWorkstream = slot.ws;
-  if (slot.tab) S.ui.activeTab = slot.tab;
-  call('setActive', { id: slot.ws }).then(() => slot.tab && call('setUi', { activeTab: slot.tab }));
+  S.ui.activeTab = slot.tab || null;
+  call('setActive', { id: slot.ws });
+  call('setUi', { activeTab: slot.tab || null });
 }
 function focusSlot(i) {
   const sp = splitState();
@@ -403,8 +414,14 @@ function focusSlot(i) {
 function setLayout(n) {
   const sp = captureSlots(splitState());
   if (sp.layout === n) return;
-  // A new pane starts on the active workstream (another of its tabs, if it has one).
-  for (let k = sp.layout; k < n; k++) if (!sp.slots[k].ws) sp.slots[k] = { ws: S.ui.activeWorkstream, tab: null };
+  // A new pane starts on the active workstream (another of its tabs, if it has one). A
+  // pane coming back keeps what it showed, unless that tab is on screen now: it must not
+  // take it from a pane that is showing it.
+  const shown = new Set(sp.slots.slice(0, sp.layout).map(s => normTab(s.tab)));
+  for (let k = sp.layout; k < n; k++) {
+    if (!sp.slots[k].ws) sp.slots[k] = { ws: S.ui.activeWorkstream, tab: null };
+    else if (shown.has(normTab(sp.slots[k].tab))) sp.slots[k].tab = null;
+  }
   sp.layout = n;
   if (sp.focus >= n) { sp.focus = 0; loadSlot(sp.slots[0]); }
   saveSplit(sp);
