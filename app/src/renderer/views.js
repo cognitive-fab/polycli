@@ -2,6 +2,9 @@
 // for docs/ (folders drill down), an HTML viewer for a diagram or page, and a Markdown
 // preview/editor. Files come from the workstream folder through the main process.
 
+import { boardView, leaveBoard } from './board.js';
+import { testsView, leaveTests } from './testsview.js';
+
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const IMG = /\.(png|jpe?g|gif|webp|svg)$/i;
 const HTML = /\.html?$/i;
@@ -126,18 +129,26 @@ let current = null;   // { el, ws, view, dirty, ... } of the view on screen
 
 // Called from render(): paints only when the workstream or the view changed, so the
 // frequent state pushes never reload an iframe or throw away an edit in progress.
-export function showProject(el, { ws, view, call, toast, ask }) {
+export function showProject(el, { ws, view, call, toast, ask, setView }) {
   const key = `${ws.id}:${view}`;
   if (current && current.key === key && el.dataset.key === key) { current.ws = ws; return; }
   if (current?.dirty && current.ws.id !== ws.id && !confirm('This document has unsaved changes. Discard them?')) {
     call('setActive', { id: current.ws.id });   // stay on the workstream the unsaved document belongs to
     return;
   }
-  current = { key, el, ws, view, call, toast, ask, dirty: false };
+  current = { key, el, ws, view, call, toast, ask, setView, dirty: false };
   el.dataset.key = key;
   paint();
 }
-export function hideProject() { if (current) { current.el.dataset.key = ''; current = null; } }
+export function hideProject() { leaveBoard(); leaveTests(); if (current) { current.el.dataset.key = ''; current = null; } }
+
+// From a card: open one of its documents in the Docs view.
+export function openDoc(c, rel) {
+  const m = memOf(c.ws.id);
+  m.docFile = rel;
+  m.docDir = rel.split('/').slice(0, -1).join('/') || 'docs';
+  c.setView('docs');
+}
 export const isDirty = () => !!current?.dirty;
 
 function paint() {
@@ -145,6 +156,11 @@ function paint() {
   if (!c) return;
   c.dirty = false;
   const m = memOf(c.ws.id);
+  leaveBoard(); leaveTests();
+  // Views share one container; drop the handlers the board and tests views set on it.
+  for (const k of ['onclick', 'ondragstart', 'ondragend', 'ondragover', 'ondrop', 'onkeydown']) c.el[k] = null;
+  if (c.view === 'board') return boardView(c);
+  if (c.view === 'tests') return testsView(c);
   if (c.view === 'docs') return m.docFile ? openFile(m.docFile, 'docs') : docsHome(m.docDir);
   return m.archFile ? (/\.(md|markdown)$/i.test(m.archFile) ? openFile(m.archFile, 'architecture') : archViewer(m.archFile)) : archHome();
 }

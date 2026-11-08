@@ -67,6 +67,20 @@ Above the tabs, **Main**, **Architecture** and **Docs** switch what the workstre
 - **Architecture** shows the archlens diagrams found in `docs/architecture/` (or `architecture/`) of the workstream folder as tiles. Click one to open it in the viewer; ‹ › move between diagrams. The architecture document (README.md) is the last tile.
 - **Docs** shows `docs/` as tiles: folders drill down, the path above the tiles takes you back up. Click a Markdown file to preview it; **Edit** shows the source beside a live preview, **Save** (Ctrl+S) writes it. If the file changed on disk meanwhile, polycli asks before overwriting. HTML files and images open in the viewer; **+ New document** creates a Markdown file in the current folder.
 
+## Board
+
+**Board** (next to Main) is a Kanban board for the workstream: Ready, Doing, Done. Describe a task in the Ready box and press **Add & discuss** (Ctrl+Enter): a card opens with a chat where Claude talks the task through with you, then can write a functional spec, a tech spec or a literature search. Drag cards between columns, or use ‹ ›.
+
+Each card's chat is a separate headless Claude (`claude -p`, resumed per card) running in the workstream folder. It can read the project, search the web and write files, but not run commands. What it writes goes to `docs/cards/<card>/` and appears as links on the card; click one to open it in Docs, where you can preview and edit it. Cards and chats are stored in `.polycli/` in the project folder (add it to `.gitignore` if you don't want to commit them).
+
+## Tests
+
+**Tests** runs the `test`, `check*`, `verify*` and `ci` scripts from the project's `package.json` and shows the numbers: tests, passed, failed, skipped, time, the failing test names, live progress while it runs, and a history of past runs. Counts come from the node:test, TAP or Jest summary; a script that prints none of those shows pass or fail only.
+
+## A session asks a question
+
+When a Claude session puts questions on screen and waits for your answers, a ✋ appears next to the workstream's dot in the rail, and on the session's entry and tab. It goes away when you answer. Sessions started before this version need a Restart to report questions.
+
 ## Time and tokens
 
 The pill at the top right shows, for the selected workstream, what Claude did this week: generation time and output tokens, like `(5m 38s · ↓ 40.7k tokens)`. The week resets Monday at 7:00.

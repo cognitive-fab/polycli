@@ -10,6 +10,8 @@ const { BridgeServer, bridgePipeName } = require('./bridge');
 const vscode = require('./vscode');
 const files = require('./projectfiles');
 const { Billing } = require('./billing');
+const { Board } = require('./board');
+const { Tests } = require('./tests');
 const store = require('./store');
 
 // Diagrams and images from a workstream's architecture/ and docs/ folders (projectfiles.js).
@@ -23,6 +25,8 @@ let win = null;
 let manager = null;
 let cowork = null;
 let billing = null;
+let board = null;
+let tests = null;
 
 function createWindow() {
   win = new BrowserWindow({
@@ -135,6 +139,15 @@ const OPS = {
   restoreWorkstream: a => manager.restoreWorkstream({ id: a.id }),
   globalKeys: () => require('./env').globalKeys(),
   helpText: () => require('fs').readFileSync(path.join(__dirname, '..', '..', 'resources', 'help', 'HELP.md'), 'utf8'),
+  boardLoad: a => board.load(a.workstreamId),
+  boardOp: a => board.op(a.workstreamId, a),
+  boardChat: a => board.chat(a.workstreamId, a.id),
+  boardDocs: a => board.docs(a.workstreamId, a.id),
+  boardSend: a => board.send(a.workstreamId, a.id, a.text),
+  boardStop: a => board.stop(a.workstreamId, a.id),
+  testsInfo: a => tests.info(a.workstreamId),
+  testsRun: a => tests.run(a.workstreamId, String(a.script)),
+  testsStop: a => tests.stop(a.workstreamId),
   setBillable: a => billing.setBillable(manager.ws(a.workstreamId), !!a.on),
   billingHistory: () => billing.history(),
   archList: a => files.listArchitecture(manager.ws(a.workstreamId).folder),
@@ -205,6 +218,10 @@ app.whenReady().then(() => {
   pty.on('data', (term, data) => send('pty:data', term, data));
   manager.on('changed', pushState);
   cowork = new Cowork(manager);
+  board = new Board(manager);
+  board.on('event', ev => send('board:event', ev));
+  tests = new Tests(manager);
+  tests.on('event', ev => send('tests:event', ev));
   billing = new Billing(manager, {
     isActive: () => !!win && !win.isDestroyed() && win.isVisible() && !win.isMinimized() && win.isFocused(),
     idleSeconds: () => powerMonitor.getSystemIdleTime(),
@@ -247,7 +264,7 @@ app.whenReady().then(() => {
 
   win.on('focus', () => win.flashFrame(false));
   app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
-  app.on('before-quit', () => { billing.stop(); cowork.dispose(); bridge.stop(); manager.dispose(); hooks.stop(); pty.dispose(); store.flush(); });
+  app.on('before-quit', () => { board.dispose(); tests.dispose(); billing.stop(); cowork.dispose(); bridge.stop(); manager.dispose(); hooks.stop(); pty.dispose(); store.flush(); });
 });
 
 app.on('window-all-closed', () => app.quit());

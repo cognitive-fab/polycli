@@ -270,7 +270,7 @@ class Manager extends EventEmitter {
   setUi(patch) {
     for (const k of ['activeTab', 'collapsed']) if (k in patch) this.state.ui[k] = patch[k];
     if ('theme' in patch && ['system', 'light', 'dark'].includes(patch.theme)) this.state.ui.theme = patch.theme;
-    if ('view' in patch && ['main', 'architecture', 'docs'].includes(patch.view)) this.state.ui.view = patch.view;
+    if ('view' in patch && ['main', 'board', 'architecture', 'docs', 'tests'].includes(patch.view)) this.state.ui.view = patch.view;
     if ('promptsHidden' in patch) this.state.ui.promptsHidden = !!patch.promptsHidden;
     this.changed();
   }

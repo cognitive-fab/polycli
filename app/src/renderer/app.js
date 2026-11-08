@@ -90,7 +90,7 @@ function render() {
   renderTabs();
   renderPanes();
   const none = !liveWorkstreams().length;
-  const view = ws && ['architecture', 'docs'].includes(S.ui.view) ? S.ui.view : 'main';
+  const view = ws && ['board', 'architecture', 'docs', 'tests'].includes(S.ui.view) ? S.ui.view : 'main';
   $('#viewbar').hidden = !ws;
   for (const b of document.querySelectorAll('#viewbar [data-view]')) b.classList.toggle('active', b.dataset.view === view);
   $('#empty').hidden = !none;
@@ -98,7 +98,7 @@ function render() {
   $('#panes').hidden = none || view !== 'main';
   $('#project').hidden = view === 'main';
   if (view === 'main') hideProject();
-  else showProject($('#project'), { ws, view, call, toast, ask });
+  else showProject($('#project'), { ws, view, call, toast, ask, setView });
   if (none) $('#empty').innerHTML = S.workstreams.length
     ? `<div><h2>All workstreams are archived</h2><p>Restore one from the Archived list at the bottom of the left rail, or create a new one.</p><button class="btn primary" id="emptyAdd">Create a workstream</button></div>`
     : `<div><h2>No workstreams yet</h2><p>A workstream groups the Claude sessions, shells and folders of one piece of work.</p><button class="btn primary" id="emptyAdd">Create a workstream</button></div>`;

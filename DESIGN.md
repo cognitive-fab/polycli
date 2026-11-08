@@ -326,6 +326,12 @@ Per session and rolled up per workstream, an **Artifacts** panel lists:
 
 Per workstream (keyed by id, name kept for history), in hourly local buckets in `state.billing`: `bill` (my seconds), `gen` (Claude's `turn_duration`) and `out` (output tokens). Transcripts are read incrementally by byte offset (a message written once per content block is counted once, by id), so restarts never double count and history survives Claude pruning transcripts. `bill` ticks every 5 s while the workstream is billable and selected, the window is focused, system idle is under 5 minutes and no session of the workstream is `busy`. Week = since Monday 07:00 local. Still open: attributing time per Cowork task, and manual adjustments.
 
+## 9c. Board, Tests and the raised hand
+
+- **Board** (`main/board.js`). Cards in `<folder>/.polycli/board.json`, chats in `.polycli/cards/<id>.json`, deliverables in `docs/cards/<id>-<title>/`. A card's chat is `claude -p --output-format stream-json --verbose` with `--session-id` on the first message and `--resume` after, `--permission-mode acceptEdits`, tools limited to Read/Write/Edit/Glob/Grep/WebSearch/WebFetch (no Bash), prompt on stdin, at most 3 running per workstream. Its transcripts are not counted by the billing numbers.
+- **Tests** (`main/tests.js`). Runs `npm run <script>` for package.json scripts named test*, check*, verify*, selftest*, typecheck, lint or ci; sums node:test / TAP / Jest summaries; history in `.polycli/test-runs.json`.
+- **✋.** `PreToolUse`/`PostToolUse` hooks on `AskUserQuestion` set and clear `session.asking`; it also clears on Stop, a new prompt, and any state other than busy/needs-you.
+
 ## 10. Architecture (Electron)
 
 ```
