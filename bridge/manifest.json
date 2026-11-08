@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "polycli-bridge",
   "display_name": "polycli bridge",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Lets Cowork tasks work with polycli, the terminal app for Claude Code sessions on this computer: link a task to a workstream, send prompts to its CLI sessions and read the answers, and report artifacts. The user approves links and prompts, and opens and closes the sessions, in polycli.",
   "author": { "name": "cognitive-fab" },
   "repository": { "type": "git", "url": "https://github.com/cognitive-fab/polycli" },
@@ -21,7 +21,8 @@
     { "name": "polycli_send", "description": "Send a prompt to a CLI session (idempotent per client_ref)." },
     { "name": "polycli_read", "description": "Read the state and response of a sent prompt." },
     { "name": "polycli_status", "description": "Live state of a session." },
-    { "name": "polycli_add_artifact", "description": "Report an artifact or document produced for the workstream." }
+    { "name": "polycli_add_artifact", "description": "Report an artifact or document produced for the workstream." },
+    { "name": "polycli_inbox", "description": "Read messages that the workstream's CLI sessions sent to this task." }
   ],
   "compatibility": {
     "platforms": ["win32"],

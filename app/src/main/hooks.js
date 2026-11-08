@@ -34,7 +34,8 @@ function writeSettings(slot, env = {}) {
     hooks[ev] = [entry];
   }
   const settings = { hooks, statusLine: { type: 'command', command: `node ${q(status)} ${slot} ${paths.pipeName}` } };
-  if (Object.keys(env).length) settings.env = env;
+  // For `node "$POLYCLI_POST" "message"` (bin/post.mjs): messages to the linked Cowork task.
+  settings.env = { ...env, POLYCLI_SLOT: slot, POLYCLI_PIPE: paths.pipeName, POLYCLI_POST: path.join(paths.bin, 'post.mjs').replace(/\\/g, '/') };
   const file = path.join(paths.run, `${slot}.settings.json`);
   fs.writeFileSync(file, JSON.stringify(settings, null, 2));
   return file;

@@ -222,6 +222,11 @@ function coworkDialog(ws) {
       ${arts.length ? `<table class="keys-table"><tbody>${arts.map(a => `<tr><td><b>${esc(a.title)}</b> <small>${esc(a.kind)}</small>${a.description ? `<br><small>${esc(a.description)}</small>` : ''}<br><small>${esc(a.linkTitle)} · ${esc(when(a.at))}</small></td><td style="text-align:right;white-space:nowrap">${a.url ? `<button type="button" class="btn" data-art="${a.id}" data-what="url" title="${esc(a.url)}">Open link</button>` : ''} ${a.path ? `<button type="button" class="btn" data-art="${a.id}" data-what="path" title="${esc(a.path)}">Show file</button>` : ''}</td></tr>`).join('')}</tbody></table>`
         : '<div class="hint">None yet.</div>'}
     </div>
+    <div class="field"><span>Messages from sessions to the linked tasks (read with polycli_inbox)</span>
+      ${(() => { const box = (cw.inbox || []).filter(m => m.workstreamId === ws.id).slice().reverse().slice(0, 15); return box.length
+        ? `<table class="keys-table"><tbody>${box.map(m => `<tr><td><small>${esc(m.sessionName)} · ${esc(when(m.at))}</small><br>${esc(m.text)}</td><td>${m.read ? 'read' : 'waiting'}</td></tr>`).join('')}</tbody></table>`
+        : '<div class="hint">None yet. In a Claude session of this workstream, ask it to send a message to the linked task.</div>'; })()}
+    </div>
     <div class="field"><span>Recent prompts from Cowork</span>
       ${turns.length ? `<table class="keys-table"><tbody>${turns.map(t => `<tr><td><small>${esc(t.sessionName)} · ${esc(t.linkTitle)}</small><br>${esc(t.text)}${t.response ? `<br><small>→ ${esc(t.response)}</small>` : ''}${t.reason ? `<br><small class="warn-text">${esc(t.reason)}</small>` : ''}</td><td>${esc(t.state)}</td></tr>`).join('')}</tbody></table>`
         : '<div class="hint">None yet.</div>'}

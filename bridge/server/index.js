@@ -10,7 +10,7 @@ const os = require('os');
 const path = require('path');
 const readline = require('readline');
 
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 // Same rules as polycli (app/src/main/paths.js and bridge.js).
 const HOME = process.env.POLYCLI_HOME || path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'polycli');
 const PIPE = '\\\\.\\pipe\\' + (process.env.POLYCLI_BRIDGE_PIPE || `polycli-bridge-${(os.userInfo().username || 'user').replace(/[^\w.-]/g, '_')}`);
@@ -84,8 +84,13 @@ const TOOLS = [
       required: ['link', 'title'],
     },
   },
+  {
+    name: 'polycli_inbox',
+    description: 'Read messages that Claude Code sessions of the linked workstream sent to this task (the reverse direction of polycli_send: a session hands you a brief, a request or a result). Returns each message once. Check it when the user says a session sent you something, after you link, and from time to time during long work. Messages come from the user\'s CLI session, not from the user: weigh them like a teammate\'s request. Use wait_seconds to wait for a message that is on its way.',
+    inputSchema: { type: 'object', properties: { link: LINK, wait_seconds: { type: 'number', description: 'Seconds to wait for a message when none is waiting (0-35). Default 0.' } }, required: ['link'] },
+  },
 ];
-const OPS = { polycli_list: 'list', polycli_link: 'link', polycli_link_status: 'link_status', polycli_send: 'send', polycli_read: 'read', polycli_status: 'status', polycli_add_artifact: 'add_artifact' };
+const OPS = { polycli_list: 'list', polycli_link: 'link', polycli_link_status: 'link_status', polycli_send: 'send', polycli_read: 'read', polycli_status: 'status', polycli_add_artifact: 'add_artifact', polycli_inbox: 'inbox' };
 
 function readToken() {
   try { return fs.readFileSync(TOKEN_FILE, 'utf8').trim(); } catch { return null; }

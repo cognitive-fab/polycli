@@ -36,11 +36,15 @@ const bgIdFrom = out => (stripAnsi(out).match(/backgrounded\s*·\s*([0-9a-f]{8})
 
 // `claude --bg` prints "backgrounded · 2eb9ba4f · <name> (idle — send a prompt to start)".
 // It ignores --session-id; the bgId is the first 8 hex digits of the session id.
+// Tells the session how to reach the Cowork / Claude Design task linked to its workstream.
+const POST_HINT = 'This session runs in polycli. When the user asks you to send a message, a reply, a brief or a request to the Cowork or Claude Design task linked to this workstream, run in the shell: node "$POLYCLI_POST" "<the message>" (pipe long text on stdin instead). The task reads it with its polycli_inbox tool. You cannot read the task\'s answers this way; they come back to you as prompts relayed by polycli.';
+
 // remote: Remote Control on, under the session's name. It works with --bg (the session
 // reports "/remote-control is active") and `claude respawn` keeps it.
 async function launchBg({ cwd, name, settingsFile, model, effort, permissionMode, remote }) {
   const args = ['--bg', '-n', name, '--settings', settingsFile];
   if (remote) args.push('--remote-control', name);
+  args.push('--append-system-prompt', POST_HINT);
   if (permissionMode) args.push('--permission-mode', permissionMode);
   if (model) args.push('--model', model);
   if (effort) args.push('--effort', effort);

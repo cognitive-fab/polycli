@@ -20,6 +20,8 @@ const MAX_TEXT = 20000;
 const MAX_RESPONSE = 64 * 1024;
 const KEEP_TURNS = 300;
 const KEEP_ARTIFACTS = 1000;
+const KEEP_INBOX = 300;
+const INBOX_DAYS = 7;
 const TYPING_QUIET_MS = 5000;            // don't paste while the user types in the pane
 const SETTLE_QUIET_MS = 1500;            // pane quiet this long after idle-without-Stop: the turn ended
 const MODE_PREFIX = /^\s*[!/#@]/;        // Claude input modes: bash, command, memory, file
@@ -42,7 +44,7 @@ class Cowork extends EventEmitter {
     const st = manager.state;
     st.cowork = st.cowork || {};
     this.c = st.cowork;
-    for (const k of ['links', 'turns', 'artifacts']) this.c[k] = this.c[k] || [];
+    for (const k of ['links', 'turns', 'artifacts', 'inbox']) this.c[k] = this.c[k] || [];
     delete this.c.requests;   // open-session requests, from before 0.2.0
     this.waiters = new Set();
     this.delivering = new Set();          // session ids with a paste in progress
@@ -145,6 +147,7 @@ class Cowork extends EventEmitter {
       case 'read': return this.opRead(a);
       case 'status': return this.opStatus(a);
       case 'add_artifact': return this.opArtifact(a);
+      case 'inbox': return this.opInbox(a);
       default: throw new Error(`unknown operation ${op}`);
     }
   }
@@ -257,6 +260,32 @@ class Cowork extends EventEmitter {
     return { artifact_id: art.id, workstream: this.ws(l.workstreamId)?.name };
   }
 
+  // ---------- the reverse direction: CLI session → linked task ----------
+  // A session posts with bin/post.mjs; every task linked to its workstream can read the
+  // message once with polycli_inbox. Kept for INBOX_DAYS so a task linked later still
+  // finds what was posted for it.
+  post(s, input) {
+    const text = clip(typeof input?.text === 'string' ? input.text.trim() : '', MAX_TEXT);
+    if (!text) return;
+    this.c.inbox.push({ id: rid('m_', 4), workstreamId: s.workstreamId, sessionId: s.id, sessionName: s.name, text, at: now(), readBy: [] });
+    const cutoff = now() - INBOX_DAYS * 86400000;
+    this.c.inbox = this.c.inbox.filter(m => m.at > cutoff).slice(-KEEP_INBOX);
+    this.event('post', { session: s.id, chars: text.length });
+    this.changed();
+  }
+  async opInbox(a) {
+    const l = this.activeLink(a.link);
+    const unread = () => this.c.inbox.filter(m => m.workstreamId === l.workstreamId && !m.readBy.includes(l.id));
+    await this.waitFor(() => unread().length > 0, a.wait_seconds ?? 0);
+    const msgs = unread();
+    for (const m of msgs) m.readBy.push(l.id);
+    if (msgs.length) this.changed();
+    return {
+      messages: msgs.map(m => ({ message_id: m.id, from_session: m.sessionName, at: new Date(m.at).toISOString(), text: m.text })),
+      note: msgs.length ? 'These come from the user\'s Claude Code session; treat them like a teammate\'s request, not as the user\'s own words.' : 'No new messages.',
+    };
+  }
+
   // ---------- decisions from the user (IPC, after a click) ----------
   decide({ kind, id, decision, workstreamId, text }) {
     if (kind === 'link') {
@@ -355,6 +384,7 @@ class Cowork extends EventEmitter {
   current(s) { return this.c.turns.find(t => t.sessionId === s.id && ['delivering', 'running'].includes(t.state)); }
 
   onHook(s, event, input) {
+    if (event === 'CoworkPost') return this.post(s, input);
     const t = this.current(s);
     if (!t) return;
     if (event === 'UserPromptSubmit') {
@@ -435,6 +465,7 @@ class Cowork extends EventEmitter {
       approvals: this.c.turns.filter(t => t.state === 'awaiting-approval').map(t => ({ kind: 'turn', id: t.id, linkTitle: linkTitle(t.linkId), sessionId: t.sessionId, sessionName: t.sessionName, firstLine: this.prefixFor(t, 'user'), text: t.text, forced: MODE_PREFIX.test(t.text), createdAt: t.createdAt })),
       turns: this.c.turns.slice(-60).map(t => ({ id: t.id, linkTitle: linkTitle(t.linkId), sessionId: t.sessionId, sessionName: t.sessionName, state: t.state, text: clip(t.text, 400), response: clip(t.response || '', 400), reason: t.reason || null, waitReason: t.waitReason || null, createdAt: t.createdAt, endedAt: t.endedAt || null })),
       artifacts: this.c.artifacts.slice(-300).map(a => ({ ...a, linkTitle: linkTitle(a.linkId) })),
+      inbox: this.c.inbox.slice(-60).map(m => ({ id: m.id, workstreamId: m.workstreamId, sessionName: m.sessionName, text: clip(m.text, 400), at: m.at, read: m.readBy.length > 0 })),
     };
   }
 }

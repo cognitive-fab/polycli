@@ -136,6 +136,10 @@ You manage the connection: open the Cowork task, open (or reopen) the Claude ses
 
 The **Cowork** panel of a workstream lists the linked tasks (with **Revoke**), the artifacts and documents they reported (**Open link**, **Show file**), and their recent prompts and answers.
 
+### Messages back to the linked task
+
+The bridge also works the other way. Ask a Claude session to send something to the linked Cowork or Claude Design task (a brief, a request, a result): it runs `node "$POLYCLI_POST" "<message>"`, and the task reads it with the `polycli_inbox` tool. Each linked task reads each message once; messages wait up to 7 days, so a task linked later still finds them. The workstream's **Cowork** dialog lists them as waiting or read. Sessions started before this version need a Restart to get the command, and the extension must be updated (**Install or update the extension…** in the Cowork dialog) for the task to get `polycli_inbox`.
+
 ## Start with Windows
 
 **⚙** in the top bar → **Start polycli when I sign in to Windows**. The Claude sessions that were open are reattached when polycli starts; after a restart of Windows they start again with their conversation.
