@@ -175,6 +175,7 @@ async function send(text) {
   const msg = text ?? c.el.querySelector('#kMsg')?.value ?? '';
   if (!msg.trim() || !id) return;
   try { await c.call('boardSend', { workstreamId: c.ws.id, id, text: msg }); } catch { return; }
+  if (ctx !== c || st.open !== id) return;   // another card was opened meanwhile; it loads its own chat
   st.messages.push({ role: 'user', text: msg.trim(), at: Date.now() });
   st.live = { status: 'Claude is thinking…', texts: [] };
   paintDrawer();

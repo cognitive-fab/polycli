@@ -156,8 +156,10 @@ class Manager extends EventEmitter {
   set(s, patch) {
     const before = s.state;
     Object.assign(s, patch);
-    // A question stays open only while the session is working or waiting on it.
-    if (patch.state && !['busy', 'needs-you'].includes(patch.state)) s.asking = null;
+    // Not cleared on idle: Claude reports a session waiting on a question as blocked, and
+    // the poll then settles it as idle while the question is still on screen. The hooks
+    // clear it (answer, Stop, next prompt); a session that is gone clears it here.
+    if (['closed', 'failed', 'detached', 'starting'].includes(patch.state)) s.asking = null;
     if (patch.state && patch.state !== before) {
       s.stateSince = now();
       store.event('state', { session: s.id, from: before, to: patch.state });

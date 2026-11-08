@@ -17,7 +17,7 @@ const now = () => Date.now();
 // test* → tests; check*, verify*, selftest*, typecheck, lint → checks (the "checkable"
 // phase of poly projects); ci → everything. build, start and the like are not offered.
 function groupOf(name) {
-  if (/^test(:|$)/.test(name)) return 'tests';
+  if (/^test/.test(name)) return 'tests';
   if (/^(check|verify|selftest|typecheck|lint)/.test(name)) return 'checks';
   if (name === 'ci') return 'ci';
   return null;
