@@ -159,7 +159,9 @@ class Manager extends EventEmitter {
     // Not cleared on idle: Claude reports a session waiting on a question as blocked, and
     // the poll then settles it as idle while the question is still on screen. The hooks
     // clear it (answer, Stop, next prompt); a session that is gone clears it here.
-    if (['closed', 'failed', 'detached', 'starting'].includes(patch.state)) s.asking = null;
+    // A reattach (detached, starting) keeps it: the question is still on screen. Launch
+    // and restart start a new process and clear it themselves.
+    if (['closed', 'failed'].includes(patch.state)) s.asking = null;
     if (patch.state && patch.state !== before) {
       s.stateSince = now();
       store.event('state', { session: s.id, from: before, to: patch.state });
@@ -304,7 +306,7 @@ class Manager extends EventEmitter {
 
   async launch(s) {
     if (!claude.isTrusted(s.cwd)) return this.startTrust(s);
-    this.set(s, { state: 'starting', error: null });
+    this.set(s, { state: 'starting', error: null, asking: null });
     const settingsFile = this.writeSessionSettings(s);
     const r = await claude.launchBg({ cwd: s.cwd, name: s.name, settingsFile, model: s.model, effort: s.effort, permissionMode: s.permissionMode });
     if (r.untrusted) return this.startTrust(s);
@@ -406,7 +408,7 @@ class Manager extends EventEmitter {
     return this.op(s, async () => {
       if (!s.bgId) return this.launch(s);
       s.open = true;
-      this.set(s, { state: 'starting', attention: null, error: null });
+      this.set(s, { state: 'starting', attention: null, asking: null, error: null });
       await this.detachTerm(`s:${s.id}`);
       this.writeSessionSettings(s);   // respawn re-reads it: picks up environment changes
       const r = await claude.respawn(s.bgId);

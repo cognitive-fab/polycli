@@ -115,7 +115,7 @@ async function addCard(chat) {
   try { ({ id } = await ctx.call('boardOp', { workstreamId: ctx.ws.id, op: 'add', title: text, notes: text, column: 'ready' })); } catch { return; }
   st.draft = '';
   await reload();
-  if (chat) { await openCard(id); await send(text); } else toast_added();
+  if (chat) { await openCard(id); await send(text, id); } else toast_added();
 }
 const toast_added = () => ctx.toast('Card added to Ready');
 
@@ -170,8 +170,8 @@ function paintDrawer() {
   if (!running) msg.focus();
 }
 
-async function send(text) {
-  const c = ctx, id = st.open;
+async function send(text, cardId) {
+  const c = ctx, id = cardId ?? st.open;
   const msg = text ?? c.el.querySelector('#kMsg')?.value ?? '';
   if (!msg.trim() || !id) return;
   try { await c.call('boardSend', { workstreamId: c.ws.id, id, text: msg }); } catch { return; }
