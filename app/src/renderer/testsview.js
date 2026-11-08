@@ -77,7 +77,7 @@ function paint() {
     const e = latest;
     top = `<div class="tcard ${e.ok ? 'ok' : 'bad'}"><div class="tcard-h"><b>${e.ok ? '✔ Passing' : e.exit === 'stopped' ? '■ Stopped' : '✖ Failing'}</b><span class="tmeta">${esc(e.script)} · ${esc(ago(e.at))} · ${dur(e.ms)}</span></div>
       ${e.tests == null
-        ? `<p class="hint">This script prints no test counts (no node:test, TAP or Jest summary, no ✔ / ✖ lines), so the result is its exit code${e.exit === 'stopped' ? '' : `: ${esc(String(e.exit))}`}.</p>`
+        ? `<p class="hint">This script prints no test counts (no node:test, TAP or Jest summary, no ✔ / ✖ lines), so the result is its exit code${e.exit === 'stopped' ? '' : e.exit == null ? ' (it was ended by a signal, with no code)' : `: ${esc(String(e.exit))}`}.</p>`
         : `<div class="tcounts"><span><b>${num(e.tests)}</b> tests</span><span class="t-pass-n"><b>${num(e.pass)}</b> passed</span><span class="t-fail-n"><b>${num(e.fail)}</b> failed</span><span><b>${num(e.skip)}</b> skipped</span></div>`}
       ${bar(e)}
       ${e.failed?.length ? `<div class="tfails"><span class="kd-label">Failing</span><ul>${e.failed.map(n => `<li>${esc(n)}</li>`).join('')}</ul></div>` : ''}

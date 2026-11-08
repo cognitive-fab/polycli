@@ -27,7 +27,7 @@ A workstream is one piece of work: a name, a color and a main folder. Its Claude
 
 ## Remote Control
 
-New Claude sessions start with Remote Control on, so you can continue them from claude.ai/code or the Claude mobile app, where they appear under their polycli name. The **Remote Control** box in the New session dialog turns it off for a session, and polycli remembers your last choice. A session with it on shows **remote** in its header. Remote Control needs a claude.ai login (Pro, Max, Ultra, Team or Enterprise); it doesn't work when a workstream bills through an API key. Sessions started before this version keep their setting until they are started again.
+New Claude sessions start with Remote Control on, so you can continue them from claude.ai/code or the Claude mobile app, where they appear under their polycli name. The **Remote Control** box in the New session dialog turns it off for a session, and polycli remembers your last choice. A session with it on shows **remote** in its header. Remote Control needs a claude.ai login (Pro, Max, Ultra, Team or Enterprise); in a workstream whose environment variables set an API key, a base URL or Bedrock/Vertex/Foundry, polycli starts sessions without it. Sessions created before this version stay without Remote Control, also after a Restart; start a new session to get it.
 
 ## The session header
 

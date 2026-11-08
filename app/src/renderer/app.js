@@ -887,6 +887,8 @@ function newWorkstreamDialog() {
 
 function newSessionDialog(ws) {
   const n = sessionsOf(ws.id).length + 1;
+  // The same names main checks: Remote Control can't work with an API key or a gateway.
+  const noRemote = (ws.env || []).some(e => /^(ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|ANTHROPIC_BASE_URL|CLAUDE_CODE_USE_(BEDROCK|VERTEX|FOUNDRY))$/i.test(e.name));
   const form = modal(`<h3>New Claude session in ${esc(ws.name)}</h3>
     <label class="field"><span>Role (names the session "${esc(ws.name)} · role")</span><input name="role" value="${n === 1 ? 'main' : 'session ' + n}" maxlength="60" required></label>
     <label class="field"><span>Folder</span><div class="row"><input name="cwd" value="${esc(ws.folder)}" required><button type="button" class="btn" data-browse="cwd" style="flex:none">Browse…</button></div></label>
@@ -894,12 +896,12 @@ function newSessionDialog(ws) {
       <label class="field"><span>Model</span><select name="model"><option value="">Default</option><option value="opus">Opus</option><option value="sonnet">Sonnet</option><option value="haiku">Haiku</option></select></label>
       <label class="field"><span>Effort</span><select name="effort"><option value="">Default</option><option>low</option><option>medium</option><option>high</option><option>xhigh</option><option>max</option></select></label>
     </div>
-    <label class="check-row"><input type="checkbox" name="remote" ${S.ui.remoteDefault !== false ? 'checked' : ''}><span>Remote Control: continue this session from claude.ai/code or the Claude mobile app (needs a claude.ai login, not an API key). Your choice is remembered for the next session.</span></label>
+    <label class="check-row"><input type="checkbox" name="remote" ${noRemote ? 'disabled' : S.ui.remoteDefault !== false ? 'checked' : ''}><span>Remote Control: continue this session from claude.ai/code or the Claude mobile app (needs a claude.ai login, not an API key). Your choice is remembered for the next session.</span></label>
     <div class="modal-actions"><button type="button" class="btn" data-cancel>Cancel</button><button class="btn primary">Start session</button></div>`,
   async fd => {
     const remote = fd.get('remote') === 'on';
     await api.call('newSession', { workstreamId: ws.id, role: fd.get('role'), cwd: fd.get('cwd').trim(), model: fd.get('model'), effort: fd.get('effort'), remote });
-    if (remote !== (S.ui.remoteDefault !== false)) api.call('setUi', { remoteDefault: remote });
+    if (!noRemote && remote !== (S.ui.remoteDefault !== false)) api.call('setUi', { remoteDefault: remote });
   });
   browseButton(form, 'cwd');
 }

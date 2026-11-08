@@ -130,8 +130,9 @@ class Tests extends EventEmitter {
       const lines = (run.carry + s).split(/\r?\n/);
       run.carry = lines.pop();
       for (const l of lines) {
-        if (/^\s*(?:✔|✓|ok \d+)\b/.test(l)) run.pass++;
-        else if (/^\s*(?:✖|✗|×|not ok \d+)\b/.test(l)) run.fail++;
+        // Not \b: ✔ and the space after it are both non-word characters.
+        if (/^\s*(?:✔|✓|ok \d+)(?:\s|$)/.test(l)) run.pass++;
+        else if (/^\s*(?:✖|✗|×|not ok \d+)(?:\s|$)/.test(l)) run.fail++;
         if (l.trim()) { run.tail.push(l.slice(0, 200)); if (run.tail.length > TAIL_LINES) run.tail.shift(); }
       }
       this.emit('event', { workstreamId: wsId, type: 'progress', pass: run.pass, fail: run.fail, tail: run.tail });
@@ -148,7 +149,7 @@ class Tests extends EventEmitter {
       const entry = {
         at: run.startedAt, script, ok, exit: run.stopped ? 'stopped' : code, ms: s.ms ?? now() - run.startedAt,
         // No summary and no ✔/✖ lines: the script gives no counts, only its exit code.
-        ...(s.tests != null || run.pass + run.fail
+        ...([s.tests, s.pass, s.fail, s.skip].some(v => v != null) || run.pass + run.fail
           ? { tests: s.tests ?? run.pass + run.fail, pass: s.pass ?? run.pass, fail: s.fail ?? run.fail, skip: s.skip ?? 0 }
           : { tests: null, pass: null, fail: null, skip: null }),
         failed, tail: ok ? undefined : run.text.split('\n').slice(-40).join('\n').slice(-4000),

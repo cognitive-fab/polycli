@@ -22,7 +22,8 @@ const { paths, checkedDir, tildify } = require('./paths');
 const MODELS = ['', 'opus', 'sonnet', 'haiku'];
 const EFFORTS = ['', 'low', 'medium', 'high', 'xhigh', 'max'];
 // Never offers bypassPermissions: polycli does not launch sessions that skip prompts.
-const PERMISSION_MODES = ['', 'default', 'acceptEdits', 'plan'];
+const NO_REMOTE_VARS = /^(ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|ANTHROPIC_BASE_URL|CLAUDE_CODE_USE_(BEDROCK|VERTEX|FOUNDRY))$/i;
+const PERMISSION_MODES =['', 'default', 'acceptEdits', 'plan'];
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const ENV_MAX = 50;
 const DOC_EXT = /\.(md|html?|pdf|docx?|pptx?|xlsx?|csv|txt)$/i;
@@ -286,6 +287,8 @@ class Manager extends EventEmitter {
   async newSession({ workstreamId, role, cwd, model = '', effort = '', permissionMode = '', remote }) {
     if (remote === undefined) remote = !process.env.POLYCLI_SMOKE && this.state.ui.remoteDefault !== false;
     const w = this.liveWs(workstreamId);
+    // Remote Control needs a claude.ai login: not with an API key, a gateway or a cloud provider.
+    if ((w.env || []).some(e => NO_REMOTE_VARS.test(e.name))) remote = false;
     if (!MODELS.includes(model)) throw new Error('unknown model');
     if (!EFFORTS.includes(effort)) throw new Error('unknown effort');
     if (!PERMISSION_MODES.includes(permissionMode)) throw new Error('unknown permission mode');
