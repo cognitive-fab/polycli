@@ -36,7 +36,6 @@ function countTestFiles(folder) {
     }
   };
   for (const t of ['test', 'tests', '__tests__']) walk(path.join(folder, t), 0);
-  try { for (const p of fs.readdirSync(path.join(folder, 'packages'))) for (const t of ['test', 'tests']) walk(path.join(folder, 'packages', p, t), 0); } catch {}
   return n;
 }
 
@@ -98,6 +97,7 @@ class Tests extends EventEmitter {
     for (const dir of this.packageDirs(wsId)) {
       let pkg;
       try { pkg = JSON.parse(fs.readFileSync(path.join(root, dir, 'package.json'), 'utf8')); } catch { continue; }
+      if (!pkg || typeof pkg !== 'object') continue;
       if (name === null) name = pkg.name || null;
       const mine = Object.entries(pkg.scripts || {}).map(([n, cmd]) => ({ dir, name: n, label: dir ? `${dir}: ${n}` : n, cmd: String(cmd).slice(0, 300), group: groupOf(n) })).filter(s => s.group && /^[\w:.-]+$/.test(s.name));
       mine.sort((a, b) => order[a.group] - order[b.group] || a.name.localeCompare(b.name));

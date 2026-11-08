@@ -9,7 +9,7 @@ let live = null;       // { script, startedAt, pass, fail, tail }
 let timer = null;
 let showTail = false;
 
-const dur = ms => (ms == null ? '–' : ms < 1000 ? `${Math.round(ms)} ms` : ms < 60000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.floor(ms / 60000)}m ${String(Math.round(ms / 1000) % 60).padStart(2, '0')}s`);
+const dur = ms => (ms == null ? '–' : ms < 1000 ? `${Math.round(ms)} ms` : ms < 60000 ? `${(ms / 1000).toFixed(1)} s` : (s => `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`)(Math.round(ms / 1000)));
 const ago = at => { const m = Math.round((Date.now() - at) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
 const num = n => (n == null ? '–' : n.toLocaleString());
 
