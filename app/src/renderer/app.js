@@ -263,7 +263,7 @@ function renderRail() {
       const closed = sessionsOf(w.id).filter(s => !isOpenSession(s));
       const sel = S.ui.activeTab;
       body = `<div class="ws-body">
-        ${open.map(s => `<button class="item st-${s.state} ${sel === `s:${s.id}` || sel === `t:${s.id}` ? 'sel' : ''}" data-tab="s:${s.id}" title="${esc(STATE_LABEL[s.state] || s.state)}"><span class="dot"></span><span class="label">${esc(s.role)}</span>${s.asking ? hand(s) : ''}<span class="kind">claude</span></button>`).join('')}
+        ${open.map(s => `<button class="item st-${s.state} ${sel === `s:${s.id}` || sel === `t:${s.id}` ? 'sel' : ''}" data-tab="s:${s.id}" title="${esc(STATE_LABEL[s.state] || s.state)}">${s.asking ? hand(s) : '<span class="dot"></span>'}<span class="label">${esc(s.role)}</span><span class="kind">claude</span></button>`).join('')}
         ${shellsOf(w.id).map(h => `<button class="item ${h.state === 'running' ? 'st-idle' : 'st-closed'} ${sel === `h:${h.id}` ? 'sel' : ''}" data-tab="h:${h.id}"><span class="dot"></span><span class="label">${esc(h.name)}</span><span class="kind">shell</span></button>`).join('')}
         ${closed.length ? `<button class="item closed-toggle" data-closed="${w.id}">${showClosed.has(w.id) ? '▾' : '▸'} Closed (${closed.length})</button>` : ''}
         ${showClosed.has(w.id) ? closed.map(s => `<button class="item st-${s.state}" data-reopen="${s.id}" title="Reopen"><span class="dot"></span><span class="label">${esc(s.role)}</span><span class="kind">${s.state === 'failed' ? 'failed' : 'reopen'}</span></button>`).join('') : ''}
@@ -278,7 +278,7 @@ function renderRail() {
       </div>`;
     }
     return `<div class="ws ${active ? 'active' : ''}" data-ws="${w.id}">
-      <button class="ws-row st-${st}" data-select-ws="${w.id}"><span class="ws-color" style="background:${esc(w.color)}"></span><span class="ws-name">${esc(w.name)}</span>${wsAsking(w.id) ? hand(wsAsking(w.id)) : ''}<span class="dot"></span></button>
+      <button class="ws-row st-${st}" data-select-ws="${w.id}"><span class="ws-color" style="background:${esc(w.color)}"></span><span class="ws-name">${esc(w.name)}</span>${wsAsking(w.id) ? hand(wsAsking(w.id)) : '<span class="dot"></span>'}</button>
       ${body}
     </div>`;
   }).join('');
@@ -443,7 +443,7 @@ function setLayout(n) {
 }
 
 function tabButtons(tabs, active) {
-  return tabs.map(t => `<button class="tab ${t.id === active ? 'active' : ''} st-${t.state}" data-tab="${t.id}"><span class="dot"></span>${esc(t.label)}${t.rec?.asking ? hand(t.rec) : ''}<span class="x" data-close="${t.id}" title="${t.kind === 'claude' ? 'Close (the conversation is kept)' : 'Close shell'}">✕</span></button>`).join('');
+  return tabs.map(t => `<button class="tab ${t.id === active ? 'active' : ''} st-${t.state}" data-tab="${t.id}">${t.rec?.asking ? hand(t.rec) : '<span class="dot"></span>'}${esc(t.label)}<span class="x" data-close="${t.id}" title="${t.kind === 'claude' ? 'Close (the conversation is kept)' : 'Close shell'}">✕</span></button>`).join('');
 }
 
 function renderPanes() {

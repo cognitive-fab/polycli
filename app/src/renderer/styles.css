@@ -302,7 +302,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .bill-cols { margin-left: auto; display: flex; gap: 16px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .bill-day td { color: var(--text-dim); font-size: 12px; padding-left: 18px; }
 .bill-day td ~ td { padding-left: 6px; }
-.hand { font-size: 13px; line-height: 1; margin-left: 4px; animation: hand-wave 1.6s ease-in-out infinite; transform-origin: 70% 90%; }
+/* ✋ takes the place of the status dot while a session waits on your answers. */
+.hand { flex: none; width: 16px; margin: 0 -2px 0 -4px; text-align: center; font-size: 14px; line-height: 1; animation: hand-wave 1.6s ease-in-out infinite; transform-origin: 70% 90%; }
 @keyframes hand-wave { 0%, 60%, 100% { transform: rotate(0); } 10%, 30% { transform: rotate(14deg); } 20%, 40% { transform: rotate(-8deg); } 50% { transform: rotate(10deg); } }
 @media (prefers-reduced-motion: reduce) { .hand { animation: none; } }
 
