@@ -21,12 +21,18 @@ function exe() {
   return claudeExe;
 }
 
+// claude colors its output when FORCE_COLOR is set, even into a pipe (polycli started
+// from a Claude Code session inherits FORCE_COLOR=3). The parsers below want plain text.
+const stripAnsi = s => String(s).replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '');
+
 function run(args, { cwd, timeout = 60000 } = {}) {
   return new Promise(resolve => {
     execFile(exe(), args, { cwd, env: cleanEnv(), timeout, windowsHide: true, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 },
-      (err, stdout, stderr) => resolve({ ok: !err, code: err ? err.code : 0, out: `${stdout || ''}${stderr || ''}` }));
+      (err, stdout, stderr) => resolve({ ok: !err, code: err ? err.code : 0, out: stripAnsi(`${stdout || ''}${stderr || ''}`) }));
   });
 }
+
+const bgIdFrom = out => (stripAnsi(out).match(/backgrounded\s*·\s*([0-9a-f]{8})\b/i) || [])[1] || null;
 
 // `claude --bg` prints "backgrounded · 2eb9ba4f · <name> (idle — send a prompt to start)".
 // It ignores --session-id; the bgId is the first 8 hex digits of the session id.
@@ -37,9 +43,9 @@ async function launchBg({ cwd, name, settingsFile, model, effort, permissionMode
   if (effort) args.push('--effort', effort);
   const r = await run(args, { cwd });
   if (/not trusted/i.test(r.out)) return { ok: false, untrusted: true, out: r.out };
-  const m = r.out.match(/backgrounded\s*·\s*([0-9a-f]{8})\b/i);
-  if (!m) return { ok: false, out: r.out };
-  return { ok: true, bgId: m[1], out: r.out };
+  const bgId = bgIdFrom(r.out);
+  if (!bgId) return { ok: false, out: r.out };
+  return { ok: true, bgId, out: r.out };
 }
 
 const stop = bgId => run(['stop', bgId]);
@@ -76,4 +82,4 @@ function planName() {
   return p ? `Claude ${p}` : null;
 }
 
-module.exports = { exe, run, launchBg, stop, respawn, remove, agents, isTrusted, planName };
+module.exports = { exe, run, bgIdFrom, launchBg, stop, respawn, remove, agents, isTrusted, planName };

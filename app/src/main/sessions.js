@@ -852,6 +852,11 @@ class Manager extends EventEmitter {
   // Reattach sessions that were open when polycli last ran; restart shells.
   restore() {
     for (const s of this.state.sessions) {
+      // A launch whose answer could not be read (colored output) left a running
+      // background session behind with its id in the error text: adopt it.
+      // (Its hooks may have moved the record on from "failed" to idle meanwhile.)
+      const orphan = !s.bgId && s.error ? claude.bgIdFrom(s.error) : null;
+      if (orphan) Object.assign(s, { bgId: orphan, error: null, state: 'detached' });
       if (s.state === 'untrusted' || s.state === 'starting' && !s.bgId) { s.state = 'failed'; s.error = s.error || 'polycli closed before the session started'; }
       // busy / needs-you survive a restart as is: after a reattach Claude reports a
       // permission prompt as "blocked" just like an idle prompt, so they can't be
