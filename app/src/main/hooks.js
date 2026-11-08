@@ -8,7 +8,7 @@ const path = require('path');
 const { EventEmitter } = require('events');
 const { paths, pipePath } = require('./paths');
 
-const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'Stop', 'Notification', 'SessionEnd', 'PostToolUse'];
+const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'Stop', 'Notification', 'SessionEnd', 'PostToolUse', 'PreToolUse'];
 
 // Scripts inside an asar can't be run by the system node, and settings files need a
 // stable path, so the helpers live in %APPDATA%\polycli\bin.
@@ -29,7 +29,8 @@ function writeSettings(slot, env = {}) {
   const hooks = {};
   for (const ev of HOOK_EVENTS) {
     const entry = { hooks: [{ type: 'command', command: `node ${q(hook)} ${ev} ${slot} ${paths.pipeName}`, timeout: 5 }] };
-    if (ev === 'PostToolUse') entry.matcher = 'Write|Edit|Artifact';
+    if (ev === 'PostToolUse') entry.matcher = 'Write|Edit|Artifact|AskUserQuestion';
+    if (ev === 'PreToolUse') entry.matcher = 'AskUserQuestion';
     hooks[ev] = [entry];
   }
   const settings = { hooks, statusLine: { type: 'command', command: `node ${q(status)} ${slot} ${paths.pipeName}` } };

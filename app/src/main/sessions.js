@@ -156,6 +156,8 @@ class Manager extends EventEmitter {
   set(s, patch) {
     const before = s.state;
     Object.assign(s, patch);
+    // A question stays open only while the session is working or waiting on it.
+    if (patch.state && !['busy', 'needs-you'].includes(patch.state)) s.asking = null;
     if (patch.state && patch.state !== before) {
       s.stateSince = now();
       store.event('state', { session: s.id, from: before, to: patch.state });
@@ -603,11 +605,16 @@ class Manager extends EventEmitter {
         this.blockedPolls.delete(s.id);
         s.promptSeq = (s.promptSeq || 0) + 1;
         if (typeof input.prompt === 'string' && input.prompt.trim()) this.recordPrompt(s, { text: input.prompt });
-        return this.set(s, { state: 'busy', attention: null, lastPrompt: clip(input.prompt, 300) });
+        return this.set(s, { state: 'busy', attention: null, asking: null, lastPrompt: clip(input.prompt, 300) });
       case 'Stop':
         this.gitSoon(s);
         this.readTranscriptHeader(s);
-        return this.set(s, { state: 'idle', attention: null, lastMessage: clip(input.last_assistant_message, 600) });
+        return this.set(s, { state: 'idle', attention: null, asking: null, lastMessage: clip(input.last_assistant_message, 600) });
+      case 'PreToolUse':
+        // The AskUserQuestion tool puts questions on screen and waits for the answers.
+        if (input.tool_name !== 'AskUserQuestion') return;
+        s.asking = { since: now(), question: clip(input.tool_input?.questions?.[0]?.question, 200) };
+        return this.changed();
       case 'Notification': {
         s.lastNotification = input;
         const msg = clip(input.message, 300) || 'Claude needs your attention';
@@ -618,6 +625,7 @@ class Manager extends EventEmitter {
         this.pollSoon();
         return;
       case 'PostToolUse': {
+        if (input.tool_name === 'AskUserQuestion') { s.asking = null; return this.changed(); }   // answered
         this.gitSoon(s);
         const f = input.tool_input?.file_path;
         if (f && DOC_EXT.test(f) && !s.documents.some(d => d.path === f)) {
