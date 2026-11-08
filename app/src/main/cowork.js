@@ -275,7 +275,7 @@ class Cowork extends EventEmitter {
   }
   async opInbox(a) {
     const l = this.activeLink(a.link);
-    const unread = () => this.c.inbox.filter(m => m.workstreamId === l.workstreamId && !m.readBy.includes(l.id));
+    const unread = () => this.c.inbox.filter(m => m.workstreamId === l.workstreamId && !m.readBy.includes(l.id) && now() - m.at < INBOX_DAYS * 86400000);
     await this.waitFor(() => unread().length > 0, a.wait_seconds ?? 0);
     const msgs = unread();
     for (const m of msgs) m.readBy.push(l.id);

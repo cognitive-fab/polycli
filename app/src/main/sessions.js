@@ -523,8 +523,10 @@ class Manager extends EventEmitter {
         }
         if (shown) break;
       }
-      // A later part that never showed: don't submit the earlier ones without it.
-      if (!shown && i > 0) return false;
+      // A part that never showed: don't submit the others without it (a relayed body
+      // without its header line would not be recognised as the relayed turn). A single
+      // part is still submitted: its first line may be drawn in a way the probe misses.
+      if (!shown && parts.length > 1) return false;
     }
     await sleep(300);
     for (let attempt = 0; attempt < 2; attempt++) {
