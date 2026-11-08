@@ -591,13 +591,16 @@ function mountTerm(host, termId) {
     if (!e.ctrlKey || e.altKey) return true;
     const k = e.key.toLowerCase();
     if (k === 'v') return false;
-    if (k === 'c' && (e.shiftKey || term.hasSelection())) {
-      if (e.type === 'keydown' && term.hasSelection()) { copyText(term.getSelection()); term.clearSelection(); }
+    if (k === 'c' && (e.shiftKey || term.hasSelection() || t.vsel)) {
+      if (e.type === 'keydown' && (term.hasSelection() || t.vsel)) { copyText(t.vsel ? vselText(t.vsel) : term.getSelection()); clearSel(t); }
       return false;
     }
     return true;
   });
-  if (!termId.startsWith('h:')) keepSelectionLocal(term, t.mouse);
+  if (!termId.startsWith('h:')) { keepSelectionLocal(term, t.mouse); dragScrollSelect(t); }
+  // Scrolling with the wheel ends a selection: what was selected scrolls away (and in a
+  // Claude pane the text under it is redrawn), so a later copy would not be what you see.
+  host.addEventListener('wheel', () => clearSel(t), { capture: true, passive: true });
   pasteFilesAsPaths(host, term);
   // OSC 52: a program in the terminal sets the clipboard. Writes only; requests to
   // read the clipboard are ignored, and so is the scrollback replayed on mount.
@@ -689,6 +692,148 @@ function keepSelectionLocal(term, mouse) {
     e.preventDefault();
     return false;
   });
+}
+
+// ---------------- selecting past the edge of a Claude pane ----------------
+// Claude's fullscreen view draws its transcript in the alternate screen, where xterm has
+// no scrollback, so dragging a selection past the top or bottom selected nothing more.
+// Here, as in a console window, holding the drag above the transcript (or below it, on
+// the input box) scrolls Claude's transcript one wheel step at a time and keeps growing
+// the selection. The selected text is collected as it scrolls by: `vsel` holds every
+// transcript line seen during the drag, and the copy takes the text from it. Only the
+// part on screen can be highlighted.
+const sel0 = (a, b) => (a.i < b.i || (a.i === b.i && a.c <= b.c) ? [a, b] : [b, a]);
+function vselText(v) {
+  const [s, e] = sel0(v.anchor, v.head);
+  const out = [];
+  for (let i = s.i; i <= e.i; i++) {
+    const line = v.doc[i] || '';
+    out.push(line.slice(i === s.i ? s.c : 0, i === e.i ? e.c + 1 : undefined).trimEnd());
+  }
+  return out.join('\n');
+}
+// The end of the transcript rows that show text as it is: above Claude's "Jump to bottom"
+// note, which is drawn over a transcript row while the transcript is scrolled up.
+function clearEnd(rows, end) {
+  for (let r = end - 1; r >= Math.max(0, end - 4); r--) if (/Jump to bottom/.test(rows[r] || '')) return r;
+  return end;
+}
+function clearSel(t) {
+  t.vsel = null;
+  t.term.clearSelection();
+}
+function dragScrollSelect(t) {
+  const { term } = t;
+  const host = t.el;
+  let drag = null;   // { anchor: {r, c}, x, y, dir, busy }
+  const geom = () => {
+    const r = term.element.querySelector('.xterm-screen').getBoundingClientRect();
+    return { r, rowH: r.height / term.rows, colW: r.width / term.cols };
+  };
+  const cell = (x, y) => {
+    const { r, rowH, colW } = geom();
+    return { r: Math.floor((y - r.top) / rowH), c: Math.min(term.cols - 1, Math.max(0, Math.floor((x - r.left) / colW))) };
+  };
+  // The highlighted part: the selection's lines that are on screen now.
+  const paint = () => {
+    const v = t.vsel;
+    if (!v) return;
+    const [s, e] = sel0(v.anchor, v.head);
+    const top = Math.max(s.i, v.top), bottom = Math.min(e.i, v.top + v.end - v.first - 1);
+    if (top > bottom) { term.clearSelection(); return; }
+    const row = i => term.buffer.active.viewportY + v.first + (i - v.top);
+    const c0 = top === s.i ? s.c : 0, c1 = bottom === e.i ? e.c : term.cols - 1;
+    term.select(c0, row(top), (bottom - top) * term.cols + c1 - c0 + 1);
+  };
+  const begin = () => {
+    const rows = screenRows(term);
+    const end = clearEnd(rows, transcriptEnd(rows));
+    // Row 0 is left out: once the transcript scrolls up, Claude pins the current prompt
+    // there, over the line that would be in it (that line shows in row 1 a step later).
+    const first = 1;
+    const a = { i: Math.min(Math.max(drag.anchor.r, first), end - 1) - first, c: drag.anchor.c };
+    t.vsel = { doc: rows.slice(first, end), top: 0, first, end, anchor: a, head: { ...a } };
+  };
+  // One wheel step towards `dir`, then the lines it brought into view join the selection.
+  const step = async dir => {
+    const v = t.vsel;
+    const before = screenRows(term);
+    term.input(`\x1b[<${dir < 0 ? 64 : 65};1;${v.first + 1}M`, false);
+    // Claude takes a moment to redraw; wait for the screen to change (up to ~1 s).
+    let after = before;
+    for (let k = 0; k < 6 && sameRows(after, before); k++) { await settle(t, 160, 400); after = screenRows(term); }
+    if (t.vsel !== v) return false;
+    // The rows Claude keeps fixed at the top while its transcript scrolls (a blank row,
+    // the pinned prompt) are not transcript: when they appear, the window starts lower.
+    let fixed = 0;
+    while (fixed < 3 && before[fixed] === after[fixed] && (before[fixed] === '' || before[fixed].startsWith('❯'))) fixed++;
+    if (fixed > v.first) { v.top += fixed - v.first; v.first = fixed; }
+    // While scrolled up, Claude writes "Jump to bottom (ctrl+End)" over a transcript row
+    // near the bottom: the window ends above it (lines are read once they pass it).
+    v.end = clearEnd(after, transcriptEnd(after));
+    const a = before.slice(v.first, v.end), b = after.slice(v.first, v.end);
+    const n = v.end - v.first;
+    // Screen row r shows doc[top + r - first]. Lines collected earlier are reused; the
+    // ones never seen are added at the top or the bottom of doc.
+    if (dir < 0) {
+      const d = shiftOf(a, b, n);   // the transcript moved down by d lines
+      if (!d) return false;
+      const fresh = d - v.top;
+      if (fresh > 0) {
+        v.doc.unshift(...b.slice(0, fresh));
+        v.anchor.i += fresh; v.head.i += fresh;
+        v.top = 0;
+      } else v.top -= d;
+    } else {
+      const d = shiftOf(b, a, n);   // the transcript moved up by d lines
+      if (!d) return false;
+      const missing = v.top + d + n - v.doc.length;
+      if (missing > 0) v.doc.push(...b.slice(n - missing));
+      v.top += d;
+    }
+    return true;
+  };
+  const tick = async () => {
+    if (!drag || drag.busy || !t.vsel) return;
+    const { r, rowH } = geom();
+    const v = t.vsel;
+    const above = drag.y < r.top + v.first * rowH, below = drag.y >= r.top + v.end * rowH;
+    if (!above && !below) return;
+    drag.busy = true;
+    const moved = await step(above ? -1 : 1);
+    drag.busy = false;
+    if (!t.vsel || !drag) return;
+    t.vsel.head = { i: above ? t.vsel.top : t.vsel.top + (t.vsel.end - t.vsel.first) - 1, c: above ? 0 : term.cols - 1 };
+    paint();
+    if (moved) setTimeout(tick, 40);
+  };
+  host.addEventListener('mousedown', e => {
+    t.vsel = null;
+    drag = null;
+    if (e.button !== 0 || term.buffer.active.type !== 'alternate' || !t.mouse.tracking || !t.mouse.sgr) return;
+    drag = { anchor: cell(e.clientX, e.clientY), x: e.clientX, y: e.clientY, busy: false };
+  }, true);
+  // While the drag scrolls, xterm's own selection (on screen cells) would fight the one
+  // kept here, so it doesn't see the moves.
+  window.addEventListener('mousemove', e => {
+    if (!drag || !(e.buttons & 1)) return;
+    drag.x = e.clientX; drag.y = e.clientY;
+    const { r: box, rowH } = geom();
+    const out = e.clientY < box.top + (t.vsel?.first ?? 1) * rowH || e.clientY >= box.top + (t.vsel?.end ?? transcriptEnd(screenRows(term))) * rowH;
+    if (!t.vsel && out) begin();
+    if (!t.vsel) return;
+    e.stopPropagation();
+    if (out) { tick(); return; }
+    const p = cell(e.clientX, e.clientY);
+    const r = Math.min(Math.max(p.r, t.vsel.first), t.vsel.end - 1);
+    t.vsel.head = { i: t.vsel.top + r - t.vsel.first, c: p.c };
+    paint();
+  }, true);
+  window.addEventListener('mouseup', () => {
+    if (!drag) return;
+    drag = null;
+    if (t.vsel) setTimeout(paint, 0);   // xterm ends its own drag on this mouseup
+  }, true);
 }
 
 // ---------------- prompt list at the right of a Claude pane ----------------

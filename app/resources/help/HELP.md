@@ -97,6 +97,8 @@ Tick **Billable workstream** in its settings to also count your own time on it: 
 
 ## Copy and paste
 
+To select more than one screen, drag past the top of the pane (or down onto Claude's input box): the transcript scrolls and the selection keeps growing, as in a console window. Ctrl+C copies all of it, not only the part on screen. Scrolling with the wheel clears a selection.
+
 - **Drag** to select text, then **Ctrl+C** to copy. With nothing selected, Ctrl+C goes to Claude as usual.
 - **Ctrl+Shift+C** always copies and never reaches Claude.
 - **Ctrl+V** pastes. The mouse wheel scrolls Claude's conversation.
