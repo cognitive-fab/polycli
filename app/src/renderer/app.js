@@ -322,7 +322,7 @@ function headerLines(s) {
   return `<div class="banner-lines">
     <div class="l1">${version}</div>
     <div class="l2">${esc(model)}${effort}${plan}</div>
-    <div class="l3"><button class="cwd" data-act="code" title="Open in VS Code (Shift: git root, Ctrl: new window)${s.liveCwd ? `&#10;Started in ${esc(s.startedShort)}` : ''}">${esc(s.cwdShort)}</button>${s.worktree ? `<span class="wt" title="The session moved into this git worktree; started in ${esc(s.startedShort)}">worktree</span>` : ''}${!s.git && h.branch ? `<span class="branch">⎇ ${esc(h.branch)}</span>` : ''}${s.bgId ? `<button class="sid" data-act="copy-id" title="Copy &quot;claude attach ${esc(s.bgId)}&quot; to continue in any terminal. That terminal takes the session over; Take back returns it here.">⧉ ${esc(s.bgId)}</button>` : ''}</div>
+    <div class="l3"><button class="cwd" data-act="code" title="Open in VS Code (Shift: git root, Ctrl: new window)${s.liveCwd ? `&#10;Started in ${esc(s.startedShort)}` : ''}">${esc(s.cwdShort)}</button>${s.worktree ? `<span class="wt" title="The session moved into this git worktree; started in ${esc(s.startedShort)}">worktree</span>` : ''}${s.remote ? `<span class="wt" title="Remote Control is on: find &quot;${esc(s.name)}&quot; at claude.ai/code or in the Claude mobile app">remote</span>` : ''}${!s.git && h.branch ? `<span class="branch">⎇ ${esc(h.branch)}</span>` : ''}${s.bgId ? `<button class="sid" data-act="copy-id" title="Copy &quot;claude attach ${esc(s.bgId)}&quot; to continue in any terminal. That terminal takes the session over; Take back returns it here.">⧉ ${esc(s.bgId)}</button>` : ''}</div>
     ${gitLine(s)}
   </div>`;
 }
@@ -894,9 +894,12 @@ function newSessionDialog(ws) {
       <label class="field"><span>Model</span><select name="model"><option value="">Default</option><option value="opus">Opus</option><option value="sonnet">Sonnet</option><option value="haiku">Haiku</option></select></label>
       <label class="field"><span>Effort</span><select name="effort"><option value="">Default</option><option>low</option><option>medium</option><option>high</option><option>xhigh</option><option>max</option></select></label>
     </div>
+    <label class="check-row"><input type="checkbox" name="remote" ${S.ui.remoteDefault !== false ? 'checked' : ''}><span>Remote Control: continue this session from claude.ai/code or the Claude mobile app (needs a claude.ai login, not an API key). Your choice is remembered for the next session.</span></label>
     <div class="modal-actions"><button type="button" class="btn" data-cancel>Cancel</button><button class="btn primary">Start session</button></div>`,
   async fd => {
-    await api.call('newSession', { workstreamId: ws.id, role: fd.get('role'), cwd: fd.get('cwd').trim(), model: fd.get('model'), effort: fd.get('effort') });
+    const remote = fd.get('remote') === 'on';
+    await api.call('newSession', { workstreamId: ws.id, role: fd.get('role'), cwd: fd.get('cwd').trim(), model: fd.get('model'), effort: fd.get('effort'), remote });
+    if (remote !== (S.ui.remoteDefault !== false)) api.call('setUi', { remoteDefault: remote });
   });
   browseButton(form, 'cwd');
 }

@@ -275,19 +275,23 @@ class Manager extends EventEmitter {
     for (const k of ['activeTab', 'collapsed']) if (k in patch) this.state.ui[k] = patch[k];
     if ('theme' in patch && ['system', 'light', 'dark'].includes(patch.theme)) this.state.ui.theme = patch.theme;
     if ('view' in patch && ['main', 'board', 'architecture', 'docs', 'tests'].includes(patch.view)) this.state.ui.view = patch.view;
+    if ('remoteDefault' in patch) this.state.ui.remoteDefault = !!patch.remoteDefault;
     if ('promptsHidden' in patch) this.state.ui.promptsHidden = !!patch.promptsHidden;
     this.changed();
   }
 
   // ---------- Claude sessions ----------
-  async newSession({ workstreamId, role, cwd, model = '', effort = '', permissionMode = '' }) {
+  // remote: start with Remote Control on (claude.ai/code and the mobile app). Defaults
+  // to the last choice in the New session dialog, on until changed; off in smoke runs.
+  async newSession({ workstreamId, role, cwd, model = '', effort = '', permissionMode = '', remote }) {
+    if (remote === undefined) remote = !process.env.POLYCLI_SMOKE && this.state.ui.remoteDefault !== false;
     const w = this.liveWs(workstreamId);
     if (!MODELS.includes(model)) throw new Error('unknown model');
     if (!EFFORTS.includes(effort)) throw new Error('unknown effort');
     if (!PERMISSION_MODES.includes(permissionMode)) throw new Error('unknown permission mode');
     const s = {
       id: newId(), workstreamId: w.id, role: cleanLabel(role, 'Role'), cwd: checkedDir(cwd || w.folder),
-      model, effort, permissionMode, bgId: null, sessionId: null, transcriptPath: null,
+      model, effort, permissionMode, remote: !!remote, bgId: null, sessionId: null, transcriptPath: null,
       state: 'starting', stateSince: now(), attention: null, lastPrompt: null, lastMessage: null, error: null,
       header: { version: null, model: null, effort: effort || null, branch: null }, documents: [],
       open: true, createdAt: now(),
@@ -308,7 +312,7 @@ class Manager extends EventEmitter {
     if (!claude.isTrusted(s.cwd)) return this.startTrust(s);
     this.set(s, { state: 'starting', error: null, asking: null });
     const settingsFile = this.writeSessionSettings(s);
-    const r = await claude.launchBg({ cwd: s.cwd, name: s.name, settingsFile, model: s.model, effort: s.effort, permissionMode: s.permissionMode });
+    const r = await claude.launchBg({ cwd: s.cwd, name: s.name, settingsFile, model: s.model, effort: s.effort, permissionMode: s.permissionMode, remote: !!s.remote });
     if (r.untrusted) return this.startTrust(s);
     if (!r.ok) return this.set(s, { state: 'failed', error: clip(r.out.trim(), 400) || 'claude --bg failed' });
     this.set(s, { bgId: r.bgId });
