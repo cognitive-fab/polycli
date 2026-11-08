@@ -11,6 +11,10 @@ let showTail = false;
 
 const dur = ms => (ms == null ? '–' : ms < 1000 ? `${Math.round(ms)} ms` : ms < 60000 ? `${(ms / 1000).toFixed(1)} s` : (s => `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`)(Math.round(ms / 1000)));
 const ago = at => { const m = Math.round((Date.now() - at) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
+// While running: counted ✔ / ✖ lines, or a note while none has appeared.
+const liveCounts = (pass, fail) => (pass + fail
+  ? `<span class="t-pass-n">${pass} passed</span><span class="t-fail-n">${fail} failed</span>`
+  : '<span class="tmeta">No test results in the output yet</span>');
 const num = n => (n == null ? '–' : n.toLocaleString());
 
 export const leaveTests = () => { ctx = null; clearInterval(timer); };
@@ -67,12 +71,14 @@ function paint() {
   let top;
   if (live) {
     top = `<div class="tcard running"><div class="tcard-h"><b>Running ${esc(live.script)}</b><span class="grow"></span><span class="tmeta" id="tElapsed"></span><button class="btn danger" data-t="stop">Stop</button></div>
-      <div class="tcounts"><span class="t-pass-n">${live.pass} passed</span><span class="t-fail-n">${live.fail} failed</span></div>
+      <div class="tcounts">${liveCounts(live.pass, live.fail)}</div>
       <pre class="ttail" id="tTail">${esc((live.tail || []).join('\n'))}</pre></div>`;
   } else if (latest) {
     const e = latest;
     top = `<div class="tcard ${e.ok ? 'ok' : 'bad'}"><div class="tcard-h"><b>${e.ok ? '✔ Passing' : e.exit === 'stopped' ? '■ Stopped' : '✖ Failing'}</b><span class="tmeta">${esc(e.script)} · ${esc(ago(e.at))} · ${dur(e.ms)}</span></div>
-      <div class="tcounts"><span><b>${num(e.tests)}</b> tests</span><span class="t-pass-n"><b>${num(e.pass)}</b> passed</span><span class="t-fail-n"><b>${num(e.fail)}</b> failed</span><span><b>${num(e.skip)}</b> skipped</span></div>
+      ${e.tests == null
+        ? `<p class="hint">This script prints no test counts (no node:test, TAP or Jest summary, no ✔ / ✖ lines), so the result is its exit code${e.exit === 'stopped' ? '' : `: ${esc(String(e.exit))}`}.</p>`
+        : `<div class="tcounts"><span><b>${num(e.tests)}</b> tests</span><span class="t-pass-n"><b>${num(e.pass)}</b> passed</span><span class="t-fail-n"><b>${num(e.fail)}</b> failed</span><span><b>${num(e.skip)}</b> skipped</span></div>`}
       ${bar(e)}
       ${e.failed?.length ? `<div class="tfails"><span class="kd-label">Failing</span><ul>${e.failed.map(n => `<li>${esc(n)}</li>`).join('')}</ul></div>` : ''}
       ${e.tail ? `<button class="btn" data-t="tail">${showTail ? 'Hide' : 'Show'} the end of the output</button>${showTail ? `<pre class="ttail">${esc(e.tail)}</pre>` : ''}` : ''}</div>`;
@@ -108,7 +114,7 @@ api.onTests(ev => {
     const t = ctx.el.querySelector('#tTail');
     if (t) { t.textContent = ev.tail.join('\n'); t.scrollTop = t.scrollHeight; }
     const n = ctx.el.querySelector('.tcounts');
-    if (n) n.innerHTML = `<span class="t-pass-n">${ev.pass} passed</span><span class="t-fail-n">${ev.fail} failed</span>`;
+    if (n) n.innerHTML = liveCounts(ev.pass, ev.fail);
   } else if (ev.type === 'start') { live = { script: ev.script, startedAt: ev.startedAt, pass: 0, fail: 0, tail: [] }; if (ctx.el.querySelector('.trun')) paint(); }
   else if (ev.type === 'done') { showTail = false; refresh(); }
 });

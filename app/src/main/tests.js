@@ -147,7 +147,10 @@ class Tests extends EventEmitter {
       const ok = code === 0 && !run.stopped;
       const entry = {
         at: run.startedAt, script, ok, exit: run.stopped ? 'stopped' : code, ms: s.ms ?? now() - run.startedAt,
-        tests: s.tests ?? (run.pass + run.fail || null), pass: s.pass ?? (run.pass || null), fail: s.fail ?? (run.fail || (ok ? 0 : null)), skip: s.skip ?? 0,
+        // No summary and no ✔/✖ lines: the script gives no counts, only its exit code.
+        ...(s.tests != null || run.pass + run.fail
+          ? { tests: s.tests ?? run.pass + run.fail, pass: s.pass ?? run.pass, fail: s.fail ?? run.fail, skip: s.skip ?? 0 }
+          : { tests: null, pass: null, fail: null, skip: null }),
         failed, tail: ok ? undefined : run.text.split('\n').slice(-40).join('\n').slice(-4000),
       };
       const hist = this.history(wsId);
