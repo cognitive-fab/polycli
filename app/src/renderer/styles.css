@@ -366,3 +366,20 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .ttail { margin: 8px 0 0; max-height: 240px; overflow: auto; background: var(--bg-term); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; }
 .ttrend { display: flex; align-items: flex-end; gap: 3px; height: 54px; margin-bottom: 12px; }
 .ttrend span { flex: 1; max-width: 18px; border-radius: 2px; min-height: 4px; }
+
+/* Split view: 2 or 4 panes in the center, each with its own tabs */
+.viewbar-gap { flex: 1; }
+.layout-btns { display: flex; gap: 2px; align-items: center; padding-bottom: 4px; }
+.viewbar .layout-btns button { padding: 2px 8px; border: 1px solid transparent; border-radius: 6px; font-size: 15px; line-height: 1.2; }
+.viewbar .layout-btns button.active { border-color: var(--accent); color: var(--accent); background: var(--tint); }
+.panes.split { display: grid; gap: 4px; padding: 4px; background: var(--line); }
+.panes.split[data-layout="2"] { grid-template-columns: 1fr 1fr; }
+.panes.split[data-layout="4"] { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+.slot { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); border: 1px solid transparent; border-radius: 6px; overflow: hidden; }
+.slot.focused { border-color: var(--accent); }
+.slot-tabs { display: flex; gap: 2px; align-items: flex-end; padding: 4px 6px 0; border-bottom: 1px solid var(--line); background: var(--bg-rail); min-height: 33px; overflow-x: auto; overflow-y: hidden; }
+.slot-tabs .tab { padding: 4px 8px; font-size: 12px; }
+.slot-ws { display: flex; align-items: center; gap: 6px; padding: 0 8px 6px 2px; font-weight: 600; font-size: 12px; white-space: nowrap; }
+.slot-ws.dim { color: var(--text-faint); font-weight: 400; }
+.slot-body { position: relative; flex: 1; min-height: 0; }
+.slot:not(.focused) .slot-tabs { opacity: .85; }

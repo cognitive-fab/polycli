@@ -64,6 +64,10 @@ When Claude needs a decision (a permission prompt, for example), the session tur
 
 **+ Mistral** opens Mistral Vibe (the `vibe` command) in a new tab in the workstream folder, with the workstream's environment variables. Sign in or paste your key the first time Vibe asks, or set `MISTRAL_API_KEY` in the workstream's settings. When you quit Vibe the tab stays on a shell; restarting polycli starts Vibe again.
 
+## Two or four panes
+
+The buttons at the right of the Main / Board / … bar show one pane (▢), two side by side (◫) or four (⊞) in the center. Each pane has its own tabs and shows one workstream. The selected pane has a blue border: the rail and the tabs act on it, so to put a workstream in a pane, click the pane and then the workstream in the rail. A session or shell is shown in one pane at a time; picking the same workstream in two panes shows two different sessions or shells of it, and a pane says so when there is nothing left to show (start another session or shell there). polycli remembers the panes.
+
 ## Architecture and Docs
 
 Above the tabs, **Main**, **Architecture** and **Docs** switch what the workstream shows.

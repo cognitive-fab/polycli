@@ -277,6 +277,16 @@ class Manager extends EventEmitter {
     if ('theme' in patch && ['system', 'light', 'dark'].includes(patch.theme)) this.state.ui.theme = patch.theme;
     if ('view' in patch && ['main', 'board', 'architecture', 'docs', 'tests'].includes(patch.view)) this.state.ui.view = patch.view;
     if ('remoteDefault' in patch) this.state.ui.remoteDefault = !!patch.remoteDefault;
+    // Split view: 1, 2 or 4 panes, each showing a workstream and one of its tabs.
+    if (patch.split && typeof patch.split === 'object') {
+      const p = patch.split;
+      const id = v => (typeof v === 'string' && v.length < 80 ? v : null);
+      this.state.ui.split = {
+        layout: [1, 2, 4].includes(p.layout) ? p.layout : 1,
+        focus: Number.isInteger(p.focus) && p.focus >= 0 && p.focus < 4 ? p.focus : 0,
+        slots: Array.from({ length: 4 }, (_, i) => ({ ws: id(p.slots?.[i]?.ws), tab: id(p.slots?.[i]?.tab) })),
+      };
+    }
     if ('promptsHidden' in patch) this.state.ui.promptsHidden = !!patch.promptsHidden;
     this.changed();
   }

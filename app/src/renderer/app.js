@@ -94,7 +94,8 @@ function render() {
   $('#viewbar').hidden = !ws;
   for (const b of document.querySelectorAll('#viewbar [data-view]')) b.classList.toggle('active', b.dataset.view === view);
   $('#empty').hidden = !none;
-  $('#tabs').hidden = none || view !== 'main';
+  $('#tabs').hidden = none || view !== 'main' || splitState().layout > 1;   // split panes have their own tabs
+  for (const b of document.querySelectorAll('#viewbar [data-layout]')) b.classList.toggle('active', +b.dataset.layout === splitState().layout);
   $('#panes').hidden = none || view !== 'main';
   $('#project').hidden = view === 'main';
   if (view === 'main') hideProject();
@@ -279,8 +280,7 @@ function renderTabs() {
   const ws = activeWs();
   if (!ws) { $('#tabs').innerHTML = ''; return; }
   const tabs = tabsOf(ws.id);
-  const active = currentTab(tabs);
-  $('#tabs').innerHTML = tabs.map(t => `<button class="tab ${t.id === active ? 'active' : ''} st-${t.state}" data-tab="${t.id}"><span class="dot"></span>${esc(t.label)}${t.rec?.asking ? hand(t.rec) : ''}<span class="x" data-close="${t.id}" title="${t.kind === 'claude' ? 'Close (the conversation is kept)' : 'Close shell'}">✕</span></button>`).join('');
+  $('#tabs').innerHTML = tabButtons(tabs, currentTab(tabs));
 }
 
 function currentTab(tabs) {
@@ -349,13 +349,97 @@ function noticeFor(s) {
   return '';
 }
 
+// ---------------- split view ----------------
+// The center shows 1, 2 or 4 panes (ui.split). The focused pane is the active workstream
+// and tab, so the rail and the tabs drive it; the others keep what they showed. A tab is
+// shown in one pane only: a pane asking for a tab shown elsewhere gets another tab of its
+// workstream, so opening the same workstream twice shows two of its sessions or shells.
+const normTab = id => (id && id.startsWith('t:') ? 's:' + id.slice(2) : id);
+function splitState() {
+  const sp = S.ui.split || {};
+  const layout = [2, 4].includes(sp.layout) ? sp.layout : 1;
+  return {
+    layout, focus: Math.min(Number.isInteger(sp.focus) ? sp.focus : 0, layout - 1),
+    slots: Array.from({ length: 4 }, (_, i) => ({ ws: sp.slots?.[i]?.ws || null, tab: sp.slots?.[i]?.tab || null })),
+  };
+}
+function slotPlan() {
+  const sp = splitState();
+  const used = new Set();
+  const plan = [];
+  for (const i of [sp.focus, ...[...Array(sp.layout).keys()].filter(k => k !== sp.focus)]) {
+    const ws = i === sp.focus ? activeWs() : liveWorkstreams().find(w => w.id === sp.slots[i].ws) || null;
+    const tabs = ws ? tabsOf(ws.id) : [];
+    const want = i === sp.focus ? currentTab(tabs) : normTab(sp.slots[i].tab);
+    let tab = tabs.some(t => t.id === want) && !used.has(want) ? want : null;
+    if (!tab) tab = tabs.find(t => !used.has(t.id))?.id || null;
+    if (tab) used.add(tab);
+    plan[i] = { i, ws, tabs, tab, focus: i === sp.focus };
+  }
+  return plan;
+}
+// What the panes show now, kept in ui.split so an unfocused pane holds its place.
+function captureSlots(sp) {
+  const plan = slotPlan();
+  sp.slots = sp.slots.map((s, k) => (plan[k] ? { ws: plan[k].ws?.id || s.ws, tab: plan[k].tab || s.tab } : s));
+  return sp;
+}
+function saveSplit(sp) { S.ui.split = sp; return call('setUi', { split: sp }); }
+function loadSlot(slot) {
+  if (!slot.ws || !liveWorkstreams().some(w => w.id === slot.ws)) return;
+  S.ui.activeWorkstream = slot.ws;
+  if (slot.tab) S.ui.activeTab = slot.tab;
+  call('setActive', { id: slot.ws }).then(() => slot.tab && call('setUi', { activeTab: slot.tab }));
+}
+function focusSlot(i) {
+  const sp = splitState();
+  if (i === sp.focus || i >= sp.layout) return false;
+  captureSlots(sp);
+  sp.focus = i;
+  saveSplit(sp);
+  loadSlot(sp.slots[i]);
+  return true;
+}
+function setLayout(n) {
+  const sp = captureSlots(splitState());
+  if (sp.layout === n) return;
+  // A new pane starts on the active workstream (another of its tabs, if it has one).
+  for (let k = sp.layout; k < n; k++) if (!sp.slots[k].ws) sp.slots[k] = { ws: S.ui.activeWorkstream, tab: null };
+  sp.layout = n;
+  if (sp.focus >= n) { sp.focus = 0; loadSlot(sp.slots[0]); }
+  saveSplit(sp);
+  if ((S.ui.view || 'main') !== 'main') setView('main'); else render();
+}
+
+function tabButtons(tabs, active) {
+  return tabs.map(t => `<button class="tab ${t.id === active ? 'active' : ''} st-${t.state}" data-tab="${t.id}"><span class="dot"></span>${esc(t.label)}${t.rec?.asking ? hand(t.rec) : ''}<span class="x" data-close="${t.id}" title="${t.kind === 'claude' ? 'Close (the conversation is kept)' : 'Close shell'}">✕</span></button>`).join('');
+}
+
 function renderPanes() {
-  const ws = activeWs();
   const panes = $('#panes');
-  const tabs = ws ? tabsOf(ws.id) : [];
-  const active = currentTab(tabs);
+  const plan = slotPlan();
+  const split = plan.length > 1;
+  panes.classList.toggle('split', split);
+  panes.dataset.layout = plan.length;
+  let frames = [...panes.querySelectorAll(':scope > .slot')];
+  const unframe = f => { for (const p of f.querySelectorAll('.pane[data-tab]')) panes.appendChild(p); f.remove(); };
+  if (!split) { frames.forEach(unframe); frames = []; }
+  while (frames.length > (split ? plan.length : 0)) unframe(frames.pop());
+  while (split && frames.length < plan.length) {
+    const f = document.createElement('div');
+    f.className = 'slot';
+    f.dataset.slot = frames.length;
+    f.innerHTML = '<div class="slot-tabs"></div><div class="slot-body"></div>';
+    panes.appendChild(f);
+    frames.push(f);
+  }
+  // Where each shown tab goes; every other tab of a visible workstream stays hidden.
+  const host = new Map();
+  for (const p of plan) if (p.tab) host.set(p.tab, split ? frames[p.i].querySelector('.slot-body') : panes);
+  const all = [];
+  for (const p of plan) for (const t of p.tabs) if (!all.some(x => x.id === t.id)) all.push(t);
   const wanted = new Set();
-  for (const t of tabs) {
+  for (const t of all) {
     let pane = panes.querySelector(`.pane[data-tab="${t.id}"]`);
     if (!pane) {
       pane = document.createElement('section');
@@ -367,7 +451,10 @@ function renderPanes() {
       panes.appendChild(pane);
     }
     wanted.add(t.id);
-    pane.hidden = t.id !== active;
+    const into = host.get(t.id);
+    if (into && pane.parentElement !== into) into.appendChild(pane);
+    if (!into && pane.parentElement !== panes) panes.appendChild(pane);
+    pane.hidden = !into;
     const top = pane.querySelector('.pane-top');
     let termId = t.id;
     if (t.kind === 'claude') {
@@ -395,19 +482,37 @@ function renderPanes() {
       showTerm(pane, termId, true, '');
     }
   }
-  for (const pane of [...panes.querySelectorAll('.pane')]) if (!wanted.has(pane.dataset.tab)) pane.remove();
-  let hint = panes.querySelector('.pane-empty');
-  if (ws && !tabs.length) {
-    if (!hint) { hint = document.createElement('div'); hint.className = 'pane pane-empty placeholder'; panes.appendChild(hint); }
-    const closed = sessionsOf(ws.id).length;
-    hint.innerHTML = `<div><p>Nothing open in ${esc(ws.name)}.</p><p><button class="btn primary" data-act="newClaude">+ Claude session</button> <button class="btn" data-act="newShell">+ Shell</button> <button class="btn" data-act="newMistral">+ Mistral</button></p>${closed ? '<p>Closed sessions are listed in the rail; click one to reopen it.</p>' : ''}</div>`;
-  } else {
-    hint?.remove();
+  for (const pane of [...panes.querySelectorAll('.pane[data-tab]')]) if (!wanted.has(pane.dataset.tab)) pane.remove();
+  // A pane with nothing to show: the workstream has no open tab, every one of its tabs
+  // is shown in another pane, or no workstream was picked for it yet.
+  const hintFor = p => {
+    if (!p.ws) return `<div><p>Select this pane, then click a workstream in the rail to show it here.</p></div>`;
+    if (p.tabs.length) return `<div><p>Every open session and shell of ${esc(p.ws.name)} is shown in another pane.</p><p><button class="btn primary" data-act="newClaude">+ Claude session</button> <button class="btn" data-act="newShell">+ Shell</button></p></div>`;
+    const closed = sessionsOf(p.ws.id).length;
+    return `<div><p>Nothing open in ${esc(p.ws.name)}.</p><p><button class="btn primary" data-act="newClaude">+ Claude session</button> <button class="btn" data-act="newShell">+ Shell</button> <button class="btn" data-act="newMistral">+ Mistral</button></p>${closed ? '<p>Closed sessions are listed in the rail; click one to reopen it.</p>' : ''}</div>`;
+  };
+  for (const p of plan) {
+    const box = split ? frames[p.i].querySelector('.slot-body') : panes;
+    let hint = box.querySelector(':scope > .pane-empty');
+    const need = split ? !p.tab : p.ws && !p.tabs.length;
+    if (need) {
+      if (!hint) { hint = document.createElement('div'); hint.className = 'pane pane-empty placeholder'; box.appendChild(hint); }
+      hint.innerHTML = hintFor(p);
+    } else hint?.remove();
+    if (split) {
+      const f = frames[p.i];
+      f.classList.toggle('focused', p.focus);
+      f.querySelector('.slot-tabs').innerHTML = p.ws
+        ? `<span class="slot-ws" title="${esc(p.ws.folderShort || p.ws.folder)}"><span class="ws-color" style="background:${esc(p.ws.color)}"></span>${esc(p.ws.name)}</span>${tabButtons(p.tabs, p.tab)}`
+        : '<span class="slot-ws dim">No workstream</span>';
+    }
   }
+  if (split) panes.querySelector(':scope > .pane-empty')?.remove();   // the single view's hint
   for (const [id, t] of terms) if (!document.body.contains(t.el)) { t.ro.disconnect(); t.term.dispose(); terms.delete(id); }
+  const focusBox = split ? frames[plan.find(p => p.focus).i] : panes;
   requestAnimationFrame(() => {
     for (const t of terms.values()) if (t.el.offsetParent) { fitTerm(t); }
-    const vis = [...terms.values()].find(t => t.el.offsetParent);
+    const vis = [...terms.values()].find(t => t.el.offsetParent && focusBox.contains(t.el));
     if (vis && !document.querySelector('.modal-back:not([hidden])') && !document.activeElement?.closest?.('.inbox-menu')) vis.term.focus();
   });
 }
@@ -1186,7 +1291,19 @@ function setView(view) {
   render();
   return call('setUi', { view });
 }
-$('#viewbar').onclick = e => { const b = e.target.closest('[data-view]'); if (b) setView(b.dataset.view); };
+$('#viewbar').onclick = e => {
+  const l = e.target.closest('[data-layout]');
+  if (l) return setLayout(+l.dataset.layout);
+  const b = e.target.closest('[data-view]');
+  if (b) setView(b.dataset.view);
+};
+// A click in an unfocused pane focuses it first (capture phase, before the click
+// handler below), so "+ Claude", a tab or a header button act on that pane's workstream.
+// The redraw waits until the click was handled: redrawing now would replace the button.
+document.addEventListener('click', e => {
+  const f = e.target.closest?.('#panes .slot');
+  if (f && focusSlot(+f.dataset.slot)) setTimeout(render, 0);
+}, true);
 $('#addWs').onclick = newWorkstreamDialog;
 $('#themeBtn').onclick = () => {
   const order = ['system', 'light', 'dark'];
