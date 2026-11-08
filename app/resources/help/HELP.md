@@ -54,7 +54,7 @@ When a session moves into a worktree, the header shows that folder with a **work
 
 ## Needs you
 
-When Claude needs a decision (a permission prompt, for example), the session turns **yellow**, the **need you** counter in the top bar goes up, and the taskbar button flashes when polycli isn't in front. Click the counter to jump to the session.
+When Claude needs a decision (a permission prompt, for example), the session turns **yellow**, the **need you** counter in the top bar goes up, and the taskbar button flashes when polycli isn't in front. A bar at the **bottom** of the window also lists every session that needs you or is asking a question (✋) and isn't on screen, with a **Show** button; Cowork link requests and prompts to approve appear in the same bar. Click the counter or **Show** to jump to the session.
 
 ## Shells
 
@@ -128,7 +128,7 @@ You manage the connection: open the Cowork task, open (or reopen) the Claude ses
 
 **In a Cowork task**, ask for it in plain words, for example: *"Use the polycli tools: link this task to the acme-api workstream, then ask the main session to run the tests and tell me the result."*
 
-1. **Link.** The task asks to link; a **Cowork** bar appears above the tabs. Pick the workstream and click **Link**, or **Reject**. Several requests can be rejected at once, or muted for 15 minutes.
+1. **Link.** The task asks to link; a **Cowork** request appears in the bar at the bottom of the window. Pick the workstream and click **Link**, or **Reject**. Several requests can be rejected at once, or muted for 15 minutes.
 2. **Prompts.** Each prompt the task wants to send appears in the bar, in full, with the target session. Click **Send** or **Reject**.
 
 ![A prompt from Cowork waiting for approval](cowork-approval.png)

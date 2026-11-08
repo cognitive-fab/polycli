@@ -28,6 +28,8 @@ let toastTimer;
 function toast(msg, err = false) {
   const t = $('#toast');
   t.textContent = msg; t.className = 'toast' + (err ? ' err' : ''); t.hidden = false;
+  const bar = $('#coworkStrip');   // above the notification bar, not over its buttons
+  t.style.bottom = `${16 + (bar && !bar.hidden ? bar.offsetHeight : 0)}px`;
   clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, err ? 6000 : 2500);
 }
 function copyText(text, label) {
@@ -157,8 +159,8 @@ function renderInbox() {
   $('#inboxBtn').classList.toggle('hot', n > 0);
   const items = [
     ...waiting.map(s => `<button class="inbox-item" data-tab="s:${s.id}"><b>${esc(s.name)}</b><small>${esc(s.attention?.message || '')}</small></button>`),
-    ...cw.pendingLinks.map(l => `<div class="inbox-item"><b>Cowork link request</b><small>${esc(l.title)}: see the Cowork bar above the tabs</small></div>`),
-    ...cw.approvals.map(a => `<div class="inbox-item"><b>${a.kind === 'turn' ? `Cowork prompt for ${esc(a.sessionName)}` : `Cowork wants a new session (${esc(a.role)})`}</b><small>${esc(a.linkTitle)}: see the Cowork bar above the tabs</small></div>`),
+    ...cw.pendingLinks.map(l => `<div class="inbox-item"><b>Cowork link request</b><small>${esc(l.title)}: see the bar at the bottom</small></div>`),
+    ...cw.approvals.map(a => `<div class="inbox-item"><b>${a.kind === 'turn' ? `Cowork prompt for ${esc(a.sessionName)}` : `Cowork wants a new session (${esc(a.role)})`}</b><small>${esc(a.linkTitle)}: see the bar at the bottom</small></div>`),
   ];
   $('#inboxMenu').innerHTML = items.length ? items.join('') : `<div class="inbox-item"><small>Nothing is waiting on you.</small></div>`;
 }
@@ -166,13 +168,25 @@ function renderInbox() {
 // ---------------- Cowork bar: link requests and approvals ----------------
 // Everything here comes from a Cowork task: escaped, shown in full, acted on only by a click.
 function renderCowork() {
-  const cw = S.cowork;
+  const cw = S.cowork || { pendingLinks: [], approvals: [] };
   const bar = $('#coworkStrip');
-  if (!cw || (!cw.pendingLinks.length && !cw.approvals.length)) { bar.hidden = true; bar.innerHTML = ''; return; }
+  // Sessions waiting on you: a permission prompt or a question (✋). Those on screen in a
+  // pane are left out: their own pane shows it.
+  const onScreen = new Set((S.ui.view || 'main') === 'main' && activeWs() ? slotPlan().map(p => p.tab) : []);
+  const waiting = S.sessions.filter(s => (s.open || s.termLive) && (s.state === 'needs-you' || s.asking) && !onScreen.has(`s:${s.id}`));
+  if (!cw.pendingLinks.length && !cw.approvals.length && !waiting.length) { bar.hidden = true; bar.innerHTML = ''; return; }
   // Don't redraw while the user is choosing in a select or editing.
   if (bar.contains(document.activeElement) && document.activeElement.matches('select, textarea')) return;
   const wsOptions = sel => liveWorkstreams().map(w => `<option value="${w.id}" ${w.id === sel ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
   const rows = [];
+  for (const s of waiting.slice(0, 4)) {
+    const w = S.workstreams.find(x => x.id === s.workstreamId);
+    const what = s.asking ? `is asking you${s.asking.question ? `: ${esc(s.asking.question)}` : ' a question'}` : `needs you${s.attention?.message ? `: ${esc(s.attention.message)}` : ''}`;
+    rows.push(`<div class="cw-row cw-needs"><span class="cw-tag needs">${s.asking ? '✋ Question' : 'Needs you'}</span>
+      <span class="grow">${w ? `<span class="ws-color" style="background:${esc(w.color)};display:inline-block;margin-right:6px"></span>` : ''}<b>${esc(s.name)}</b> ${what}</span>
+      <button class="btn primary" data-tab="s:${s.id}">Show</button></div>`);
+  }
+  if (waiting.length > 4) rows.push(`<div class="cw-row"><span class="grow">${waiting.length - 4} more session${waiting.length - 4 === 1 ? '' : 's'} waiting: see "need you" at the top right</span></div>`);
   const links = cw.pendingLinks;
   links.slice(0, 3).forEach(l => rows.push(`<div class="cw-row" data-cw-link="${l.id}">
       <span class="cw-tag">Cowork</span>

@@ -30,7 +30,6 @@
       <nav id="wsList"></nav>
     </aside>
     <main class="main">
-      <div class="cowork-strip" id="coworkStrip" hidden></div>
       <div class="viewbar" id="viewbar" hidden>
         <button data-view="main" title="Claude sessions and shells">Main</button>
         <button data-view="board" title="Kanban board: Ready, Doing, Done; chat about a card and have Claude write its specs">Board</button>
@@ -48,6 +47,9 @@
       <div class="panes" id="panes"></div>
       <div class="project" id="project" hidden></div>
       <div class="empty" id="empty" hidden></div>
+      <!-- What needs you, at the bottom where the eyes are when typing: sessions waiting
+           for an answer, Cowork link requests and prompts to approve. -->
+      <div class="cowork-strip" id="coworkStrip" hidden></div>
     </main>
   </div>
   <div class="modal-back" id="modalBack" hidden><form class="modal" id="modal"></form></div>

@@ -212,7 +212,9 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .help code { font-family: var(--mono); font-size: 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
 .help ul, .help ol { padding-left: 20px; margin: 6px 0; }
 .help-img { display: block; max-width: 100%; margin: 10px 0 6px; border: 1px solid var(--line); border-radius: 8px; }
-.cowork-strip { border-bottom: 1px solid var(--line); background: #7c8cf812; max-height: 45vh; overflow-y: auto; }
+.cowork-strip { flex: none; border-top: 2px solid var(--needs); background: var(--bg-elev); box-shadow: 0 -6px 18px #0004; max-height: 45vh; overflow-y: auto; }
+.cw-row.cw-needs { color: var(--text); }
+.cw-tag.needs { background: var(--needs); color: #1d1503; }
 .cw-row { display: flex; align-items: flex-start; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--text-dim); }
 .cw-row:first-child { border-top: 0; }
 .cw-row b { color: var(--text); }
