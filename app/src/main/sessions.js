@@ -288,7 +288,7 @@ class Manager extends EventEmitter {
     if (remote === undefined) remote = !process.env.POLYCLI_SMOKE && this.state.ui.remoteDefault !== false;
     const w = this.liveWs(workstreamId);
     // Remote Control needs a claude.ai login: not with an API key, a gateway or a cloud provider.
-    if ((w.env || []).some(e => NO_REMOTE_VARS.test(e.name))) remote = false;
+    if ((w.env || []).some(e => NO_REMOTE_VARS.test(e.name)) || globalNoRemote()) remote = false;
     if (!MODELS.includes(model)) throw new Error('unknown model');
     if (!EFFORTS.includes(effort)) throw new Error('unknown effort');
     if (!PERMISSION_MODES.includes(permissionMode)) throw new Error('unknown permission mode');
@@ -885,4 +885,7 @@ class Manager extends EventEmitter {
   }
 }
 
-module.exports = { Manager, modelDisplay, transcriptTail };
+// A Windows-level API key, gateway or cloud provider reaches every session as well.
+const globalNoRemote = () => Object.keys(process.env).some(k => NO_REMOTE_VARS.test(k));
+
+module.exports = { Manager, modelDisplay, transcriptTail, globalNoRemote };

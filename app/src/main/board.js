@@ -145,7 +145,7 @@ class Board extends EventEmitter {
     const args = ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--allowedTools', TOOLS,
       '--append-system-prompt', system, ...(first ? ['--session-id', card.session] : ['--resume', card.session])];
     let extra = {};
-    try { extra = this.m.envFor(w); } catch {}
+    try { extra = this.m.envFor(w); } catch (e) { console.error('card chat environment unavailable', e.message); }
     const child = spawn(exe, args, { cwd: w.folder, env: cleanEnv(extra), windowsHide: true });
     this.running.set(key, { child, startedAt: now() });
     this.emit('event', { workstreamId: wsId, id, type: 'start' });

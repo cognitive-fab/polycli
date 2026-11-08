@@ -52,7 +52,7 @@ function send(channel, ...args) {
 function snapshot() {
   const snap = manager.snapshot();
   if (billing) snap.workstreams = snap.workstreams.map(w => ({ ...w, billable: billing.isBillable(w.id) }));
-  return { ...snap, cowork: cowork ? cowork.snapshot() : null, billing: billing ? billing.summary() : null };
+  return { ...snap, cowork: cowork ? cowork.snapshot() : null, billing: billing ? billing.summary() : null, noRemoteGlobal: require('./sessions').globalNoRemote() };
 }
 
 function pushState() {

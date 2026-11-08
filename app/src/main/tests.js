@@ -119,8 +119,9 @@ class Tests extends EventEmitter {
     const known = this.scripts(wsId).scripts.find(s => s.label === script);
     if (!known) throw new Error('unknown script');
     let extra = {};
-    try { extra = this.m.envFor(w); } catch {}
-    const run = { script, startedAt: now(), pass: 0, fail: 0, tail: [], text: '', carry: '' };
+    let envError = null;
+    try { extra = this.m.envFor(w); } catch (e) { envError = e.message; console.error('test environment unavailable', e.message); }
+    const run = { script, startedAt: now(), pass: 0, fail: 0, tail: envError ? [`polycli: the workstream's environment variables could not be read (${envError}); running without them.`] : [], text: '', carry: '' };
     this.runs.set(wsId, run);
     const child = spawn(`npm run ${known.name}`, { cwd: path.join(w.folder, known.dir), env: cleanEnv({ ...extra, FORCE_COLOR: '0', NO_COLOR: '1', CI: '1' }), shell: true, windowsHide: true });
     run.child = child;
