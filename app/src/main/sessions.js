@@ -495,25 +495,36 @@ class Manager extends EventEmitter {
     const sleep = ms => new Promise(r => setTimeout(r, ms));
     const before = s.promptSeq || 0;
     const plain = str => str.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/\s+/g, '');
+    // Claude numbers its paste placeholders (#1, #2…). A placeholder already on screen
+    // (an earlier part, redrawn) must not count as this part having arrived: Claude takes
+    // a long paste in asynchronously, and an Enter sent before it lands submits only the
+    // earlier parts (a relayed prompt reached Claude as its header line alone).
+    // Only placeholders drawn since this prompt began count (numbering may restart per input).
+    const lastPaste = str => Math.max(0, ...[...str.matchAll(/\[Pastedtext#(\d+)/g)].map(m => +m[1]));
+    let promptStart = null;
     for (let i = 0; i < parts.length; i++) {
       const text = parts[i];
       // Claude may draw spaces as cursor moves (CSI n C), so compare without whitespace.
       const probe = text.trim().split('\n')[0].replace(/\s+/g, '').slice(0, 16);
+      let shown = false;
       for (let attempt = 0; attempt < (i === 0 ? 3 : 1); attempt++) {
         const t0 = now();
         while (now() - (this.lastOutput.get(term) || 0) < 1000 && now() - t0 < 10000) await sleep(100);
-        const mark = this.pty.scrollback(term).length;
+        const mark = this.pty.pos(term);
+        if (promptStart === null) promptStart = mark;
+        const seen = lastPaste(plain(this.pty.since(term, promptStart)));
         this.pty.write(term, `\x1b[200~${text}\x1b[201~`);
         const t1 = now();
-        let shown = false;
         // Pasting again too early would double the text.
         while (!shown && now() - t1 < 8000) {
           await sleep(100);
-          const fresh = plain(this.pty.scrollback(term).slice(Math.max(0, mark - 64)));
-          shown = fresh.includes(probe) || fresh.includes('[Pastedtext#');
+          const fresh = plain(this.pty.since(term, mark - (i === 0 ? 64 : 0)));
+          shown = fresh.includes(probe) || lastPaste(fresh) > seen;
         }
         if (shown) break;
       }
+      // A later part that never showed: don't submit the earlier ones without it.
+      if (!shown && i > 0) return false;
     }
     await sleep(300);
     for (let attempt = 0; attempt < 2; attempt++) {
