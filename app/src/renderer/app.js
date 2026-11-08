@@ -25,11 +25,16 @@ async function call(op, args) {
   catch (e) { toast(String(e.message || e).replace(/^Error invoking remote method 'polycli': (Error: )?/, ''), true); throw e; }
 }
 let toastTimer;
+// Toasts sit above the notification bar, not over its buttons; the bar can grow or go
+// away while a toast is up, so this runs again whenever the bar is redrawn.
+function placeToast() {
+  const t = $('#toast'), bar = $('#coworkStrip');
+  if (t && !t.hidden) t.style.bottom = `${16 + (bar && !bar.hidden ? bar.offsetHeight : 0)}px`;
+}
 function toast(msg, err = false) {
   const t = $('#toast');
   t.textContent = msg; t.className = 'toast' + (err ? ' err' : ''); t.hidden = false;
-  const bar = $('#coworkStrip');   // above the notification bar, not over its buttons
-  t.style.bottom = `${16 + (bar && !bar.hidden ? bar.offsetHeight : 0)}px`;
+  placeToast();
   clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, err ? 6000 : 2500);
 }
 function copyText(text, label) {
@@ -152,13 +157,14 @@ async function billingDialog() {
 }
 
 function renderInbox() {
-  const waiting = S.sessions.filter(s => s.state === 'needs-you');
+  // Same sessions as the bottom bar lists: a decision to make or a question (✋) to answer.
+  const waiting = S.sessions.filter(s => s.state === 'needs-you' || (s.asking && (s.open || s.termLive)));
   const cw = S.cowork || { approvals: [], pendingLinks: [] };
   const n = waiting.length + cw.approvals.length + cw.pendingLinks.length;
   $('#inboxCount').textContent = n;
   $('#inboxBtn').classList.toggle('hot', n > 0);
   const items = [
-    ...waiting.map(s => `<button class="inbox-item" data-tab="s:${s.id}"><b>${esc(s.name)}</b><small>${esc(s.attention?.message || '')}</small></button>`),
+    ...waiting.map(s => `<button class="inbox-item" data-tab="s:${s.id}"><b>${s.asking ? '✋ ' : ''}${esc(s.name)}</b><small>${esc(s.asking ? s.asking.question || 'is asking you a question' : s.attention?.message || '')}</small></button>`),
     ...cw.pendingLinks.map(l => `<div class="inbox-item"><b>Cowork link request</b><small>${esc(l.title)}: see the bar at the bottom</small></div>`),
     ...cw.approvals.map(a => `<div class="inbox-item"><b>${a.kind === 'turn' ? `Cowork prompt for ${esc(a.sessionName)}` : `Cowork wants a new session (${esc(a.role)})`}</b><small>${esc(a.linkTitle)}: see the bar at the bottom</small></div>`),
   ];
@@ -172,9 +178,10 @@ function renderCowork() {
   const bar = $('#coworkStrip');
   // Sessions waiting on you: a permission prompt or a question (✋). Those on screen in a
   // pane are left out: their own pane shows it.
-  const onScreen = new Set((S.ui.view || 'main') === 'main' && activeWs() ? slotPlan().map(p => p.tab) : []);
+  const onMain = !['board', 'architecture', 'docs', 'tests'].includes(S.ui.view);   // as render() decides
+  const onScreen = new Set(onMain && liveWorkstreams().length ? slotPlan().map(p => p.tab).filter(Boolean) : []);
   const waiting = S.sessions.filter(s => (s.open || s.termLive) && (s.state === 'needs-you' || s.asking) && !onScreen.has(`s:${s.id}`));
-  if (!cw.pendingLinks.length && !cw.approvals.length && !waiting.length) { bar.hidden = true; bar.innerHTML = ''; return; }
+  if (!cw.pendingLinks.length && !cw.approvals.length && !waiting.length) { bar.hidden = true; bar.innerHTML = ''; placeToast(); return; }
   // Don't redraw while the user is choosing in a select or editing.
   if (bar.contains(document.activeElement) && document.activeElement.matches('select, textarea')) return;
   const wsOptions = sel => liveWorkstreams().map(w => `<option value="${w.id}" ${w.id === sel ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
@@ -208,6 +215,7 @@ ${esc(a.text)}</pre></div>
   }
   bar.innerHTML = rows.join('');
   bar.hidden = false;
+  placeToast();
 }
 
 async function coworkClick(el) {
