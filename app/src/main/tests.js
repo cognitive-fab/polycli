@@ -18,7 +18,7 @@ const now = () => Date.now();
 // phase of poly projects); ci → everything. build, start and the like are not offered.
 function groupOf(name) {
   if (/^test/.test(name)) return 'tests';
-  if (/^(check|verify|selftest|typecheck|lint)/.test(name)) return 'checks';
+  if (/^(check|verify|selftest|typecheck|lint|smoke)/.test(name)) return 'checks';
   if (name === 'ci') return 'ci';
   return null;
 }
@@ -81,18 +81,34 @@ class Tests extends EventEmitter {
   history(wsId) {
     try { const h = JSON.parse(fs.readFileSync(this.histFile(wsId), 'utf8')); return Array.isArray(h) ? h : []; } catch { return []; }
   }
+  // The folders with a package.json: the workstream folder, each folder directly under
+  // it (an app/ beside a repo-level README) and each one under packages/.
+  packageDirs(wsId) {
+    const root = this.folder(wsId);
+    const dirs = [''];
+    const kids = (rel) => { try { return fs.readdirSync(path.join(root, rel), { withFileTypes: true }).filter(d => d.isDirectory() && !/^(\.|node_modules$|out$|dist$)/.test(d.name)).map(d => (rel ? `${rel}/` : '') + d.name); } catch { return []; } };
+    for (const d of [...kids(''), ...kids('packages')]) dirs.push(d);
+    return dirs.filter(d => fs.existsSync(path.join(root, d, 'package.json'))).slice(0, 30);
+  }
   scripts(wsId) {
-    let pkg;
-    try { pkg = JSON.parse(fs.readFileSync(path.join(this.folder(wsId), 'package.json'), 'utf8')); } catch { return { name: null, scripts: [] }; }
-    const scripts = Object.entries(pkg.scripts || {}).map(([name, cmd]) => ({ name, cmd: String(cmd).slice(0, 300), group: groupOf(name) })).filter(s => s.group && /^[\w:.-]+$/.test(s.name));
+    const root = this.folder(wsId);
     const order = { tests: 0, checks: 1, ci: 2 };
-    scripts.sort((a, b) => order[a.group] - order[b.group] || a.name.localeCompare(b.name));
-    return { name: pkg.name || null, scripts };
+    const scripts = [];
+    let name = null;
+    for (const dir of this.packageDirs(wsId)) {
+      let pkg;
+      try { pkg = JSON.parse(fs.readFileSync(path.join(root, dir, 'package.json'), 'utf8')); } catch { continue; }
+      if (name === null) name = pkg.name || null;
+      const mine = Object.entries(pkg.scripts || {}).map(([n, cmd]) => ({ dir, name: n, label: dir ? `${dir}: ${n}` : n, cmd: String(cmd).slice(0, 300), group: groupOf(n) })).filter(s => s.group && /^[\w:.-]+$/.test(s.name));
+      mine.sort((a, b) => order[a.group] - order[b.group] || a.name.localeCompare(b.name));
+      scripts.push(...mine);
+    }
+    return { name, scripts };
   }
   info(wsId) {
     const r = this.runs.get(wsId);
     return {
-      ...this.scripts(wsId), files: countTestFiles(this.folder(wsId)), history: this.history(wsId),
+      ...this.scripts(wsId), files: this.packageDirs(wsId).reduce((n, d) => n + countTestFiles(path.join(this.folder(wsId), d)), 0), history: this.history(wsId),
       running: r ? { script: r.script, startedAt: r.startedAt, pass: r.pass, fail: r.fail, tail: r.tail } : null,
     };
   }
@@ -100,13 +116,13 @@ class Tests extends EventEmitter {
   run(wsId, script) {
     const w = this.m.liveWs(wsId);
     if (this.runs.has(wsId)) throw new Error('A test run is already in progress');
-    const known = this.scripts(wsId).scripts.find(s => s.name === script);
+    const known = this.scripts(wsId).scripts.find(s => s.label === script);
     if (!known) throw new Error('unknown script');
     let extra = {};
     try { extra = this.m.envFor(w); } catch {}
     const run = { script, startedAt: now(), pass: 0, fail: 0, tail: [], text: '', carry: '' };
     this.runs.set(wsId, run);
-    const child = spawn(`npm run ${script}`, { cwd: w.folder, env: cleanEnv({ ...extra, FORCE_COLOR: '0', NO_COLOR: '1', CI: '1' }), shell: true, windowsHide: true });
+    const child = spawn(`npm run ${known.name}`, { cwd: path.join(w.folder, known.dir), env: cleanEnv({ ...extra, FORCE_COLOR: '0', NO_COLOR: '1', CI: '1' }), shell: true, windowsHide: true });
     run.child = child;
     const feed = d => {
       const s = d.toString('utf8').replace(ANSI, '');

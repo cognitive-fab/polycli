@@ -53,15 +53,15 @@ function paint() {
   const scripts = info.scripts;
   if (!scripts.length) {
     c.el.innerHTML = `<div class="pv-scroll"><div class="pv-head"><h2>Tests</h2></div><div class="pv-empty"><h3>No test scripts found</h3>
-      <p>This tab runs the <code>test</code>, <code>check*</code>, <code>verify*</code> and <code>ci</code> scripts in the <code>package.json</code> of the workstream folder${info.name ? '' : ' (there is none here)'}.</p></div></div>`;
+      <p>This tab runs the <code>test</code>, <code>check*</code>, <code>verify*</code> and <code>ci</code> scripts in the <code>package.json</code> of the workstream folder, of a folder directly under it, or of one under <code>packages/</code>${info.name ? '' : ' (none found)'}.</p></div></div>`;
     return;
   }
   const hist = info.history;
   const lastBy = name => [...hist].reverse().find(e => e.script === name);
   const latest = hist[hist.length - 1];
   const runBtns = scripts.map(s => {
-    const l = lastBy(s.name);
-    return `<button class="btn ${s.group === 'tests' ? '' : ''}" data-t="run" data-script="${esc(s.name)}" ${live ? 'disabled' : ''} title="${esc(s.cmd)}">▶ ${esc(s.name)}${l ? `<span class="t-dot ${l.ok ? 't-ok' : 't-bad'}"></span>` : ''}</button>`;
+    const l = lastBy(s.label);
+    return `<button class="btn" data-t="run" data-script="${esc(s.label)}" ${live ? 'disabled' : ''} title="${esc(s.cmd)}">▶ ${esc(s.label)}${l ? `<span class="t-dot ${l.ok ? 't-ok' : 't-bad'}"></span>` : ''}</button>`;
   }).join('');
 
   let top;
