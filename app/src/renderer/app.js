@@ -539,7 +539,7 @@ function renderPanes() {
     }
   }
   if (split) panes.querySelector(':scope > .pane-empty')?.remove();   // the single view's hint
-  for (const [id, t] of terms) if (!document.body.contains(t.el)) { t.ro.disconnect(); t.term.dispose(); terms.delete(id); }
+  for (const [id, t] of terms) if (!document.body.contains(t.el)) { disposeTerm(t); terms.delete(id); }
   const focusBox = split ? frames[plan.find(p => p.focus).i] : panes;
   requestAnimationFrame(() => {
     for (const t of terms.values()) if (t.el.offsetParent) { fitTerm(t); }
@@ -564,11 +564,17 @@ function showTerm(pane, termId, live, placeholder) {
   // before, and any stale one for the new id, then start a fresh xterm.
   for (const id of new Set([host.dataset.term, termId])) {
     const old = id && terms.get(id);
-    if (old) { old.ro.disconnect(); old.term.dispose(); terms.delete(id); }
+    if (old) { disposeTerm(old); terms.delete(id); }
   }
   host.innerHTML = '';
   host.dataset.term = termId;
   mountTerm(host, termId);
+}
+
+function disposeTerm(t) {
+  t.ac?.abort();
+  t.ro?.disconnect();
+  t.term.dispose();
 }
 
 function mountTerm(host, termId) {
@@ -580,7 +586,10 @@ function mountTerm(host, termId) {
   const fit = new FitAddon();
   term.loadAddon(fit);
   term.open(host);
-  const t = { term, fit, el: host, ro: null, ready: false, queue: [], mouse: { tracking: false, sgr: false } };
+  // Every DOM listener of this terminal goes away with it (disposeTerm): the .term
+  // element is reused when a pane switches terminals (trust prompt → session).
+  const t = { term, fit, el: host, ro: null, ready: false, queue: [], mouse: { tracking: false, sgr: false }, ac: new AbortController() };
+  const signal = t.ac.signal;
   terms.set(termId, t);
   term.onData(d => api.write(termId, d));
   // Copy and paste work like Windows Terminal: drag selects, Ctrl+C copies when there
@@ -600,8 +609,8 @@ function mountTerm(host, termId) {
   if (!termId.startsWith('h:')) { keepSelectionLocal(term, t.mouse); dragScrollSelect(t); }
   // Scrolling with the wheel ends a selection: what was selected scrolls away (and in a
   // Claude pane the text under it is redrawn), so a later copy would not be what you see.
-  host.addEventListener('wheel', () => clearSel(t), { capture: true, passive: true });
-  pasteFilesAsPaths(host, term);
+  host.addEventListener('wheel', () => clearSel(t), { capture: true, passive: true, signal });
+  pasteFilesAsPaths(host, term, signal);
   // OSC 52: a program in the terminal sets the clipboard. Writes only; requests to
   // read the clipboard are ignored, and so is the scrollback replayed on mount.
   term.parser.registerOscHandler(52, data => {
@@ -630,7 +639,7 @@ function mountTerm(host, termId) {
 // pasted image path as [Image #n]. Files copied or dropped from Explorer give their own
 // paths; an image with no file (a screenshot) is saved by polycli first. Text on the
 // clipboard always wins, and pastes as usual.
-function pasteFilesAsPaths(host, term) {
+function pasteFilesAsPaths(host, term, signal) {
   const quote = p => (/\s/.test(p) ? `"${p}"` : p);
   const typePaths = list => { if (list.length) { term.paste(list.map(quote).join(' ')); term.focus(); } };
   host.addEventListener('paste', async e => {
@@ -645,16 +654,17 @@ function pasteFilesAsPaths(host, term) {
     e.stopImmediatePropagation();
     if (!paths.length) {
       try { paths.push(await call('savePastedImage', { data: new Uint8Array(await image.arrayBuffer()) })); } catch { return; }
+      if (signal?.aborted) return;   // the terminal closed while the image was saved
     }
     typePaths(paths);
-  }, true);
-  host.addEventListener('dragover', e => { if (e.dataTransfer?.types.includes('Files')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
+  }, { capture: true, signal });
+  host.addEventListener('dragover', e => { if (e.dataTransfer?.types.includes('Files')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } }, { signal });
   host.addEventListener('drop', e => {
     const files = [...(e.dataTransfer?.files || [])];
     if (!files.length) return;
     e.preventDefault();
     typePaths(files.map(f => api.filePath(f)).filter(Boolean));
-  });
+  }, { signal });
 }
 
 // Claude Code turns on mouse reporting. xterm then hands every drag to Claude instead
@@ -715,7 +725,7 @@ function vselText(v) {
 // The end of the transcript rows that show text as it is: above Claude's "Jump to bottom"
 // note, which is drawn over a transcript row while the transcript is scrolled up.
 function clearEnd(rows, end) {
-  for (let r = end - 1; r >= Math.max(0, end - 4); r--) if (/Jump to bottom/.test(rows[r] || '')) return r;
+  for (let r = end - 1; r >= Math.max(0, end - 4); r--) if (/Jump to bottom \(ctrl\+End\)/.test(rows[r] || '')) return r;
   return end;
 }
 function clearSel(t) {
@@ -765,8 +775,11 @@ function dragScrollSelect(t) {
     if (t.vsel !== v) return false;
     // The rows Claude keeps fixed at the top while its transcript scrolls (a blank row,
     // the pinned prompt) are not transcript: when they appear, the window starts lower.
+    // Blank rows count only above the pinned prompt: a blank transcript line can stay in
+    // place by chance, the pinned prompt can't.
     let fixed = 0;
     while (fixed < 3 && before[fixed] === after[fixed] && (before[fixed] === '' || before[fixed].startsWith('❯'))) fixed++;
+    while (fixed > 0 && !after[fixed - 1].startsWith('❯')) fixed--;
     if (fixed > v.first) { v.top += fixed - v.first; v.first = fixed; }
     // While scrolled up, Claude writes "Jump to bottom (ctrl+End)" over a transcript row
     // near the bottom: the window ends above it (lines are read once they pass it).
@@ -794,25 +807,28 @@ function dragScrollSelect(t) {
     return true;
   };
   const tick = async () => {
-    if (!drag || drag.busy || !t.vsel) return;
+    if (!drag || drag.busy || !t.vsel || signal.aborted) return;   // gone with its terminal
     const { r, rowH } = geom();
     const v = t.vsel;
     const above = drag.y < r.top + v.first * rowH, below = drag.y >= r.top + v.end * rowH;
     if (!above && !below) return;
-    drag.busy = true;
+    const d0 = drag;
+    d0.busy = true;
     const moved = await step(above ? -1 : 1);
-    drag.busy = false;
-    if (!t.vsel || !drag) return;
-    t.vsel.head = { i: above ? t.vsel.top : t.vsel.top + (t.vsel.end - t.vsel.first) - 1, c: above ? 0 : term.cols - 1 };
+    d0.busy = false;
+    // Released (and maybe a new drag started) while Claude was scrolling: this one is over.
+    if (drag !== d0 || t.vsel !== v || signal.aborted) return;
+    v.head = { i: above ? v.top : v.top + (v.end - v.first) - 1, c: above ? 0 : term.cols - 1 };
     paint();
     if (moved) setTimeout(tick, 40);
   };
+  const signal = t.ac.signal;
   host.addEventListener('mousedown', e => {
     t.vsel = null;
     drag = null;
     if (e.button !== 0 || term.buffer.active.type !== 'alternate' || !t.mouse.tracking || !t.mouse.sgr) return;
     drag = { anchor: cell(e.clientX, e.clientY), x: e.clientX, y: e.clientY, busy: false };
-  }, true);
+  }, { capture: true, signal });
   // While the drag scrolls, xterm's own selection (on screen cells) would fight the one
   // kept here, so it doesn't see the moves.
   window.addEventListener('mousemove', e => {
@@ -828,12 +844,12 @@ function dragScrollSelect(t) {
     const r = Math.min(Math.max(p.r, t.vsel.first), t.vsel.end - 1);
     t.vsel.head = { i: t.vsel.top + r - t.vsel.first, c: p.c };
     paint();
-  }, true);
+  }, { capture: true, signal });
   window.addEventListener('mouseup', () => {
     if (!drag) return;
     drag = null;
     if (t.vsel) setTimeout(paint, 0);   // xterm ends its own drag on this mouseup
-  }, true);
+  }, { capture: true, signal });
 }
 
 // ---------------- prompt list at the right of a Claude pane ----------------
