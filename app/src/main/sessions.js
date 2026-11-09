@@ -7,6 +7,7 @@
 // Status comes from hook events (fast) reconciled against `claude agents --json`
 // (slow, but authoritative on whether the session exists and is stopped).
 const crypto = require('crypto');
+const { Pins } = require('./pins');
 const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
@@ -111,7 +112,11 @@ class Manager extends EventEmitter {
     this.gitByDir = new Map();        // folder → { info, repo, pr, deploy, at, prAt, busy }; not saved
     this.gitTimers = new Map();       // folder → debounce timer
     this.nudges = new Map();          // terminal id → resize timers of its latest attach
-    pty.on('data', id => this.lastOutput.set(id, now()));
+    pty.on('data', (id, data) => {
+      this.lastOutput.set(id, now());
+      if (id.startsWith('h:')) this.pins.onData(id.slice(2), data);
+    });
+    this.pins = new Pins(this);
     pty.on('exit', (id, code) => this.onTermExit(id, code));
     pty.on('error', (id, message) => this.onTermExit(id, -1, message));
   }
@@ -461,7 +466,14 @@ class Manager extends EventEmitter {
     return h;
   }
   startShell(h, run) {
+    // A pinned shell runs its command, after the shell it waits for is ready (pins.js).
+    if (!run && h.pin?.command) {
+      run = this.pins.commandFor(h);
+      if (!run) return this.changed();   // waiting, or the shell it waits for is gone
+    }
+    this.pins.started(h);
     h.state = 'running';
+    h.waitNote = null;
     const w = this.state.workstreams.find(x => x.id === h.workstreamId);
     h.envRev = w?.envRev || 0;
     let extra = {};
@@ -476,10 +488,26 @@ class Manager extends EventEmitter {
   restartShell(id) {
     const h = this.shell(id);
     h.open = true;
-    if (!this.pty.isLive(`h:${h.id}`)) this.startShell(h);
+    if (!this.pty.isLive(`h:${h.id}`) && h.state !== 'waiting') this.startShell(h);
+  }
+  // Pin (or unpin, with an empty command) and, if asked, run it now.
+  async pinShell({ id, command, after, when, text, port, run }) {
+    const h = this.shell(id);
+    this.pins.setPin(h, { command, after, when, text, port });
+    if (run && h.pin) await this.runShell(id);
+  }
+  // Run a pinned shell's command again: a fresh shell, waiting first if it depends on another.
+  async runShell(id) {
+    const h = this.shell(id);
+    if (!h.pin?.command) throw new Error('This shell has no pinned command');
+    this.pins.unwait(h);
+    await this.detachTerm(`h:${h.id}`);
+    h.open = true;
+    this.startShell(h);
   }
   async closeShell(id) {
     const h = this.shell(id);
+    this.pins.unwait(h);
     await this.detachTerm(`h:${h.id}`);
     this.state.shells = this.state.shells.filter(x => x.id !== h.id);
     this.changed();
@@ -903,6 +931,7 @@ class Manager extends EventEmitter {
 
   dispose() {
     this.disposed = true;
+    this.pins.dispose();
     for (const t of this.gitTimers.values()) clearTimeout(t);
     clearTimeout(this.pollTimer);
     store.flush();

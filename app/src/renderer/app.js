@@ -57,7 +57,7 @@ function wsState(wid) {
 function tabsOf(wid) {
   const tabs = [];
   for (const s of sessionsOf(wid)) if (isOpenSession(s)) tabs.push({ id: `s:${s.id}`, label: s.role, state: s.state, kind: 'claude', rec: s });
-  for (const h of shellsOf(wid)) tabs.push({ id: `h:${h.id}`, label: h.name, state: h.state === 'running' ? 'idle' : 'closed', kind: 'shell', rec: h });
+  for (const h of shellsOf(wid)) tabs.push({ id: `h:${h.id}`, label: (h.pin ? '📌 ' : '') + h.name, state: h.state === 'running' ? 'idle' : h.state === 'waiting' ? 'starting' : h.state === 'failed' ? 'failed' : 'closed', kind: 'shell', rec: h });
   return tabs;
 }
 
@@ -516,9 +516,14 @@ function renderPanes() {
       const h = t.rec;
       const hw = S.workstreams.find(x => x.id === h.workstreamId);
       const stale = hw && h.state === 'running' && (h.envRev || 0) !== (hw.envRev || 0);
-      top.innerHTML = `<div class="notice info"><span class="grow">${esc(h.agent === 'mistral' ? 'Mistral Vibe (vibe)' : h.command)} ·<button class="cwd btn" data-act="code-shell" style="font-family:var(--mono)">${esc(h.cwdShort)}</button>${stale ? ' · environment variables changed; open a new shell to get them' : ''}</span>${h.state !== 'running' ? '<button class="btn" data-act="restart-shell">Restart shell</button>' : ''}</div>`;
+      const dep = h.pin?.after && S.shells.find(x => x.id === h.pin.after);
+      const pinLine = h.pin
+        ? `<div class="notice ${h.pinError ? 'err' : 'info'}"><span class="grow">📌 Runs <code>${esc(h.pin.command)}</code> when polycli starts${dep ? `, after <b>${esc(dep.name)}</b> ${h.pin.when === 'exit' ? 'finishes its command' : h.pin.when === 'text' ? `shows “${esc(h.pin.text)}”` : `answers on port ${esc(h.pin.port)}`}` : ''}${h.waitNote ? ` · <b>${esc(h.waitNote)}…</b>` : ''}${h.pinError ? ` · ${esc(h.pinError)}` : ''}</span><button class="btn" data-act="run-shell" title="Start a fresh shell and run the pinned command (waiting for the other shell first, if set)">▶ Run</button><button class="btn" data-act="pin-shell">Edit pin…</button></div>`
+        : '';
+      top.innerHTML = `<div class="notice info"><span class="grow">${esc(h.agent === 'mistral' ? 'Mistral Vibe (vibe)' : h.command)} ·<button class="cwd btn" data-act="code-shell" style="font-family:var(--mono)">${esc(h.cwdShort)}</button>${stale ? ' · environment variables changed; open a new shell to get them' : ''}</span>${h.pin ? '' : '<button class="btn" data-act="pin-shell" title="Run a command in this shell every time polycli starts, optionally after another shell is ready">📌 Pin…</button>'}${h.state === 'exited' ? '<button class="btn" data-act="restart-shell">Restart shell</button>' : ''}</div>${pinLine}`;
       top.dataset.shell = h.id;
-      showTerm(pane, termId, true, '');
+      const waiting = h.state === 'waiting' || (h.state === 'failed' && !h.termLive);
+      showTerm(pane, termId, !waiting || terms.has(termId) && h.termLive, h.state === 'waiting' ? `${h.waitNote || 'Waiting'}…` : h.pinError || 'Not started.');
     }
   }
   for (const pane of [...panes.querySelectorAll('.pane[data-tab]')]) if (!wanted.has(pane.dataset.tab)) pane.remove();
@@ -1135,6 +1140,35 @@ function fitTerm(t) {
 }
 
 // ---------------- dialogs ----------------
+// Pin a shell: a command polycli runs in it every time it starts, optionally once
+// another shell of the workstream is ready. "Ready" is chosen, since a server never
+// finishes: its command ended, a text in its output, or a port that answers.
+function pinDialog(h) {
+  if (!h) return;
+  const p = h.pin || {};
+  const others = S.shells.filter(x => x.workstreamId === h.workstreamId && x.id !== h.id);
+  const form = modal(`<h3>📌 Pin “${esc(h.name)}”</h3>
+    <label class="field"><span>Command to run in this shell every time polycli starts (also on ▶ Run)</span><input name="command" value="${esc(p.command || '')}" placeholder="agentmesh up" spellcheck="false" style="font-family:var(--mono)"></label>
+    <label class="field"><span>Start after</span><select name="after"><option value="">Nothing: run right away</option>${others.map(x => `<option value="${x.id}" ${x.id === p.after ? 'selected' : ''}>${esc(x.name)}${x.pin ? ` (📌 ${esc(x.pin.command)})` : ''}</option>`).join('')}</select></label>
+    <div class="field pin-when"><span>…is ready, meaning</span>
+      <label class="check-row"><input type="radio" name="when" value="text" ${(p.when || 'text') === 'text' ? 'checked' : ''}><span>its output shows <input name="text" value="${esc(p.text || '')}" placeholder="listening on" style="width:220px"> (for a server)</span></label>
+      <label class="check-row"><input type="radio" name="when" value="port" ${p.when === 'port' ? 'checked' : ''}><span>port <input name="port" value="${esc(p.port || '')}" placeholder="8080" style="width:90px"> on this computer answers (for a server)</span></label>
+      <label class="check-row"><input type="radio" name="when" value="exit" ${p.when === 'exit' ? 'checked' : ''}><span>its pinned command has finished successfully (for a build or a setup step)</span></label>
+      <div class="hint">polycli gives up after 15 minutes, and doesn't start this one if the other command fails.</div>
+    </div>
+    <label class="check-row"><input type="checkbox" name="run" ${h.pin ? '' : 'checked'}><span>Run it now (restarts this shell)</span></label>
+    <div class="modal-actions">${h.pin ? '<button type="button" class="btn danger" id="unpin" style="margin-right:auto">Unpin</button>' : ''}<button type="button" class="btn" data-cancel>Cancel</button><button class="btn primary">Pin</button></div>`,
+  async fd => {
+    if (!fd.get('command').trim()) throw new Error('Give the command to run, or Cancel');
+    await api.call('pinShell', { id: h.id, command: fd.get('command'), after: fd.get('after'), when: fd.get('when'), text: fd.get('text'), port: +fd.get('port') || null, run: fd.get('run') === 'on' });
+    toast(fd.get('run') === 'on' ? 'Pinned; running it now' : 'Pinned: it runs when polycli starts');
+  });
+  const box = form.querySelector('.pin-when');
+  const sync = () => { box.hidden = !form.querySelector('[name=after]').value; };
+  form.querySelector('[name=after]').onchange = sync;
+  sync();
+  form.querySelector('#unpin')?.addEventListener('click', async () => { await call('pinShell', { id: h.id, command: '' }); $('#modalBack').hidden = true; toast('Unpinned'); });
+}
 // One text answer in a dialog; resolves to the text, or null when cancelled.
 function ask(title, label, value = '') {
   return new Promise(resolve => {
@@ -1463,6 +1497,8 @@ document.addEventListener('click', async e => {
   if (act === 'code' && sid) return openVSCode({ sessionId: sid }, e);
   if (act === 'code-shell' && hid) return openVSCode({ shellId: hid }, e);
   if (act === 'restart-shell' && hid) return call('restartShell', { id: hid });
+  if (act === 'run-shell' && hid) return call('runShell', { id: hid });
+  if (act === 'pin-shell' && hid) return pinDialog(S.shells.find(x => x.id === hid));
   if (act === 'close' && sid) return call('closeSession', { id: sid });
   if (act === 'reopen' && sid) return call('reopenSession', { id: sid });
   const ses = sid && S.sessions.find(x => x.id === sid);

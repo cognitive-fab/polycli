@@ -60,6 +60,16 @@ When Claude needs a decision (a permission prompt, for example), the session tur
 
 **+ Shell** opens PowerShell in the workstream folder, with the workstream's environment variables. Shells end when polycli closes and new ones open in the same folders when it starts again; their history isn't kept.
 
+### Pinned shells
+
+**📌 Pin…** in a shell's header gives it a command that runs every time polycli starts (and on **▶ Run**), for example a server: `agentmesh up`. A pinned shell can **start after** another shell of the workstream is ready, meaning one of:
+
+- its output shows a text you give (`listening on`): the usual choice for a server, which never finishes;
+- a port on this computer answers (`8080`): also for a server;
+- its pinned command has finished successfully: for a build or setup step.
+
+While it waits, the shell says what it is waiting for. polycli gives up after 15 minutes, and doesn't start it if the other shell's command failed or the other shell was closed. **Edit pin…** changes it or unpins the shell.
+
 ## Mistral
 
 **+ Mistral** opens Mistral Vibe (the `vibe` command) in a new tab in the workstream folder, with the workstream's environment variables. Sign in or paste your key the first time Vibe asks, or set `MISTRAL_API_KEY` in the workstream's settings. When you quit Vibe the tab stays on a shell; restarting polycli starts Vibe again.
