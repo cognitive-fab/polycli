@@ -128,7 +128,10 @@ function launch(h, run, pinned) {
     return { file: 'wsl.exe', args };
   }
   if (kind === 'ssh') {
-    const cd = h.dir ? `cd ${sq(h.dir)} && ` : '';
+    // ~ stays the remote home (a quoted '~' would not expand); a folder that isn't there
+    // is reported and the shell still opens, instead of the connection closing.
+    const dirArg = !h.dir ? '' : h.dir === '~' || h.dir === '~/' ? '"$HOME"' : h.dir.startsWith('~/') ? `"$HOME"/${sq(h.dir.slice(2))}` : sq(h.dir);
+    const cd = dirArg ? `{ cd ${dirArg} || echo ${sq(`polycli: no folder ${h.dir} there; staying in your home folder`)}; }; ` : '';
     const opts = ['-t', ...(h.key ? ['-i', h.key] : []), ...(h.port ? ['-p', String(h.port)] : [])];
     if (!run && !cd) return { file: 'ssh.exe', args: [...opts, h.host] };
     // sshd runs a remote command in a plain (non-login) shell: hand the script to a login
