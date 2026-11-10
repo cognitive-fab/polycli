@@ -12,6 +12,7 @@ const KINDS = ['pwsh', 'wsl', 'ssh'];
 // A host from ~/.ssh/config or user@host; never starts with "-" (an ssh option). No
 // "host:port": ssh doesn't read it, the port goes in its own field (-p).
 const HOST = /^(?:[\w.-]+@)?[\w][\w.-]*$/;
+const IPV6 = /^(?:[\w.-]+@)?[0-9a-f]*:[0-9a-f]*:[0-9a-f:.%\w]*$/i;   // fe80::1, user@::1, 2001:db8::1%eth0
 const DISTRO = /^[\w][\w.-]*$/;
 
 // The end marker: OSC 633 "polycli-done;1" (success) or ";0", invisible in the terminal.
@@ -80,7 +81,8 @@ function parseSsh(line) {
     else if (!out.host) out.host = w;
     else throw new Error('Only one host, and no remote command (use 📌 Pin for a command)');
   }
-  if (out.user && out.host && !out.host.includes('@')) out.host = `${out.user}@${out.host}`;
+  if (out.user && out.host?.includes('@')) throw new Error('The user is given twice (-l and user@); keep one');
+  if (out.user && out.host) out.host = `${out.user}@${out.host}`;
   return out;
 }
 
@@ -107,8 +109,9 @@ function checkKind({ kind = 'pwsh', distro, host, dir, key, port, user }) {
       if (!/^[\w][\w.-]*$/.test(user)) throw new Error('The user name has characters ssh would not take');
       host = `${user}@${host.replace(/^[^@]*@/, '')}`;
     }
-    if (/:\d+$/.test(host)) throw new Error('Put the port in the Port box (or -p), not after the host');
-    if (!HOST.test(host)) throw new Error('Give a host from your SSH config, user@host, or a whole ssh command');
+    // One colon is host:port (ssh doesn't read it); two or more is an IPv6 address.
+    if (/^[^:]+:\d+$/.test(host)) throw new Error('Put the port in the Port box (or -p), not after the host');
+    if (!HOST.test(host) && !IPV6.test(host)) throw new Error('Give a host from your SSH config, user@host, or a whole ssh command');
     port = port ? +port : null;
     if (port !== null && !(Number.isInteger(port) && port > 0 && port < 65536)) throw new Error('The port must be between 1 and 65535');
     return { kind, distro: null, host, dir: dir || null, key: keyPath(key), port };
@@ -131,13 +134,19 @@ function launch(h, run, pinned) {
     // ~ stays the remote home (a quoted '~' would not expand); a folder that isn't there
     // is reported and the shell still opens, instead of the connection closing.
     const dirArg = !h.dir ? '' : h.dir === '~' || h.dir === '~/' ? '"$HOME"' : h.dir.startsWith('~/') ? `"$HOME"/${sq(h.dir.slice(2))}` : sq(h.dir);
-    const cd = dirArg ? `{ cd ${dirArg} || echo ${sq(`polycli: no folder ${h.dir} there; staying in your home folder`)}; }; ` : '';
+    const missing = `echo ${sq(`polycli: no folder ${h.dir} there; staying in your home folder`)}`;
     const opts = ['-t', ...(h.key ? ['-i', h.key] : []), ...(h.port ? ['-p', String(h.port)] : [])];
-    if (!run && !cd) return { file: 'ssh.exe', args: [...opts, h.host] };
-    // sshd runs a remote command in a plain (non-login) shell: hand the script to a login
-    // shell, so the command sees the PATH set up in ~/.profile, as in the shell you get.
-    const script = `${cd}${run ? `${run}${pinned ? SH_DONE : ''}; ` : ''}exec "$SHELL" -l`;
-    return { file: 'ssh.exe', args: [...opts, h.host, `exec "$SHELL" -lc ${sq(script)}`] };
+    if (!run && !dirArg) return { file: 'ssh.exe', args: [...opts, h.host] };
+    // sshd runs this in a plain (non-login) shell. The command runs in a login shell of
+    // its own, so it sees the PATH set up in ~/.profile; the shell you then get is one
+    // login shell (the profile isn't run twice in it). In a missing folder the command
+    // isn't run, and a pinned one reports failure, so shells waiting for it don't start.
+    const runIt = run ? `"$SHELL" -lc ${sq(`${run}${pinned ? SH_DONE : ''}`)}` : ':';
+    const failed = pinned ? `${missing}; sh -c ${sq(`false${SH_DONE}`)}` : missing;
+    const script = dirArg
+      ? `if cd ${dirArg}; then ${runIt}; else ${run ? failed : missing}; fi; exec "$SHELL" -l`
+      : `${runIt}; exec "$SHELL" -l`;
+    return { file: 'ssh.exe', args: [...opts, h.host, script] };
   }
   const args = [...(h.args || ['-NoLogo'])];
   if (run) args.push('-NoExit', '-Command', `${run}${pinned ? PWSH_DONE : ''}`);
