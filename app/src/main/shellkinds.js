@@ -9,8 +9,9 @@ const path = require('path');
 const { execFile } = require('child_process');
 
 const KINDS = ['pwsh', 'wsl', 'ssh'];
-// A host from ~/.ssh/config or user@host[:port-less]; never starts with "-" (an ssh option).
-const HOST = /^(?:[\w.-]+@)?[\w][\w.:-]*$/;
+// A host from ~/.ssh/config or user@host; never starts with "-" (an ssh option). No
+// "host:port": ssh doesn't read it, the port goes in its own field (-p).
+const HOST = /^(?:[\w.-]+@)?[\w][\w.-]*$/;
 const DISTRO = /^[\w][\w.-]*$/;
 
 // The end marker: OSC 633 "polycli-done;1" (success) or ";0", invisible in the terminal.
@@ -99,6 +100,7 @@ function checkKind({ kind = 'pwsh', distro, host, dir, key, port }) {
       key = key || p.key;
       port = port || p.port;
     }
+    if (/:\d+$/.test(host)) throw new Error('Put the port in the Port box (or -p), not after the host');
     if (!HOST.test(host)) throw new Error('Give a host from your SSH config, user@host, or a whole ssh command');
     port = port ? +port : null;
     if (port !== null && !(Number.isInteger(port) && port > 0 && port < 65536)) throw new Error('The port must be between 1 and 65535');
@@ -122,7 +124,10 @@ function launch(h, run, pinned) {
     const cd = h.dir ? `cd ${sq(h.dir)} && ` : '';
     const opts = ['-t', ...(h.key ? ['-i', h.key] : []), ...(h.port ? ['-p', String(h.port)] : [])];
     if (!run && !cd) return { file: 'ssh.exe', args: [...opts, h.host] };
-    return { file: 'ssh.exe', args: [...opts, h.host, `${cd}${run ? `${run}${pinned ? SH_DONE : ''}; ` : ''}exec "$SHELL" -l`] };
+    // sshd runs a remote command in a plain (non-login) shell: hand the script to a login
+    // shell, so the command sees the PATH set up in ~/.profile, as in the shell you get.
+    const script = `${cd}${run ? `${run}${pinned ? SH_DONE : ''}; ` : ''}exec "$SHELL" -l`;
+    return { file: 'ssh.exe', args: [...opts, h.host, `exec "$SHELL" -lc ${sq(script)}`] };
   }
   const args = [...(h.args || ['-NoLogo'])];
   if (run) args.push('-NoExit', '-Command', `${run}${pinned ? PWSH_DONE : ''}`);
