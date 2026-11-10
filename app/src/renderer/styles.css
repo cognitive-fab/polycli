@@ -386,3 +386,9 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .slot-ws.dim { color: var(--text-faint); font-weight: 400; }
 .slot-body { position: relative; flex: 1; min-height: 0; }
 .slot:not(.focused) .slot-tabs { opacity: .85; }
+
+/* New shell dialog: one box per part of the ssh command */
+.ssh-grid { display: grid; grid-template-columns: 1fr 1.3fr 80px; gap: 0 8px; margin-left: 28px; }
+.ssh-grid .ssh-host { grid-column: 1 / -1; }
+.ssh-grid .field { min-width: 0; margin-bottom: 8px; }
+.ssh-grid .field select, .ssh-grid .field input { width: 100%; min-width: 0; }

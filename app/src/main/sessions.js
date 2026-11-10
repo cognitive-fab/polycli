@@ -460,9 +460,9 @@ class Manager extends EventEmitter {
   // `run` is a command for this first start only (Deploy). The stored args stay a plain
   // shell, so restarting polycli never runs it again.
   // kind: pwsh (default), wsl (a distribution) or ssh (a host); see shellkinds.js.
-  newShell({ workstreamId, cwd, run, name, agent, kind, distro, host, dir, key, port }) {
+  newShell({ workstreamId, cwd, run, name, agent, kind, distro, host, dir, key, port, user }) {
     const w = this.liveWs(workstreamId);
-    const k = agent ? kinds.checkKind({}) : kinds.checkKind({ kind, distro, host, dir, key, port });
+    const k = agent ? kinds.checkKind({}) : kinds.checkKind({ kind, distro, host, dir, key, port, user });
     const label = name ? cleanLabel(name, 'Name') : agent ? AGENTS[agent].label : k.kind === 'wsl' ? k.distro.toLowerCase() : k.kind === 'ssh' ? k.host : 'pwsh';
     const h = { id: newId(), workstreamId: w.id, name: label, agent: agent || null, ...k, cwd: checkedDir(cwd || w.folder), command: kinds.launch(k, null).file, args: ['-NoLogo'], open: true, state: 'running', createdAt: now() };
     this.state.shells.push(h);

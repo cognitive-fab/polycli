@@ -45,7 +45,8 @@ function sshKeys() {
   const dir = path.join(os.homedir(), '.ssh');
   try {
     const names = fs.readdirSync(dir);
-    return names.filter(n => (names.includes(`${n}.pub`) || /\.pem$/i.test(n)) && fs.statSync(path.join(dir, n)).isFile()).map(n => path.join(dir, n));
+    // A broken link or a file gone meanwhile is skipped, not the whole list.
+    return names.filter(n => (names.includes(`${n}.pub`) || /\.pem$/i.test(n)) && fs.statSync(path.join(dir, n), { throwIfNoEntry: false })?.isFile()).map(n => path.join(dir, n));
   } catch { return []; }
 }
 
@@ -84,7 +85,7 @@ function parseSsh(line) {
 }
 
 // Checks the fields the renderer sends for a new shell; returns what goes on the record.
-function checkKind({ kind = 'pwsh', distro, host, dir, key, port }) {
+function checkKind({ kind = 'pwsh', distro, host, dir, key, port, user }) {
   if (!KINDS.includes(kind)) throw new Error('unknown kind of shell');
   dir = typeof dir === 'string' ? dir.trim() : '';
   if (dir.length > 300 || /[\0\r\n]/.test(dir)) throw new Error('The folder must be one line');
@@ -99,6 +100,12 @@ function checkKind({ kind = 'pwsh', distro, host, dir, key, port }) {
       host = p.host || '';
       key = key || p.key;
       port = port || p.port;
+    }
+    // The User box: the account on the other computer (replaces a user@ typed in the host).
+    user = typeof user === 'string' ? user.trim() : '';
+    if (user) {
+      if (!/^[\w][\w.-]*$/.test(user)) throw new Error('The user name has characters ssh would not take');
+      host = `${user}@${host.replace(/^[^@]*@/, '')}`;
     }
     if (/:\d+$/.test(host)) throw new Error('Put the port in the Port box (or -p), not after the host');
     if (!HOST.test(host)) throw new Error('Give a host from your SSH config, user@host, or a whole ssh command');
