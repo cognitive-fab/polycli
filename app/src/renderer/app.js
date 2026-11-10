@@ -524,7 +524,7 @@ function renderPanes() {
       const where = h.kind === 'ssh'
         ? (h.dir ? ` · <code>${esc(h.dir)}</code>` : '')
         : ` ·<button class="cwd btn" data-act="code-shell" style="font-family:var(--mono)">${esc(h.kind === 'wsl' && h.dir ? h.dir : h.cwdShort)}</button>`;
-      const what = h.agent === 'mistral' ? 'Mistral Vibe (vibe)' : h.kind === 'wsl' ? `WSL · ${h.distro}` : h.kind === 'ssh' ? `ssh ${h.host}` : h.command;
+      const what = h.agent === 'mistral' ? 'Mistral Vibe (vibe)' : h.kind === 'wsl' ? `WSL · ${h.distro}` : h.kind === 'ssh' ? `ssh ${h.host}${h.port ? ` -p ${h.port}` : ''}${h.key ? ` · key ${h.key.split(/[\\/]/).pop()}` : ''}` : h.command;
       top.innerHTML = `<div class="notice info"><span class="grow">${esc(what)}${where}${stale ? ' · environment variables changed; open a new shell to get them' : ''}</span>${h.pin ? '' : '<button class="btn" data-act="pin-shell" title="Run a command in this shell every time polycli starts, optionally after another shell is ready">📌 Pin…</button>'}${h.state === 'exited' ? '<button class="btn" data-act="restart-shell">Restart shell</button>' : ''}</div>${pinLine}`;
       top.dataset.shell = h.id;
       const waiting = h.state === 'waiting' || (h.state === 'failed' && !h.termLive);
@@ -1148,7 +1148,7 @@ function fitTerm(t) {
 // A new shell: PowerShell on this computer, a WSL distribution, or another computer over
 // SSH (hosts from ~/.ssh/config are offered; ssh asks for passwords in the tab itself).
 // Shift+click on "+ Shell" skips this and opens PowerShell. The last kind is remembered.
-let lastShell = { kind: 'pwsh', distro: '', host: '' };
+let lastShell = { kind: 'pwsh', distro: '', host: '', key: '', port: '' };
 async function newShellDialog(ws) {
   const known = await call('shellKinds').catch(() => ({ wsl: [], ssh: [] }));
   const k = lastShell;
@@ -1156,7 +1156,11 @@ async function newShellDialog(ws) {
     <div class="field shell-kinds">
       <label class="check-row"><input type="radio" name="kind" value="pwsh" ${k.kind === 'pwsh' ? 'checked' : ''}><span><b>PowerShell</b> on this computer, in ${esc(ws.folderShort || ws.folder)}</span></label>
       <label class="check-row"><input type="radio" name="kind" value="wsl" ${k.kind === 'wsl' ? 'checked' : ''} ${known.wsl.length ? '' : 'disabled'}><span><b>WSL</b> <select name="distro">${known.wsl.map(d => `<option ${d === k.distro ? 'selected' : ''}>${esc(d)}</option>`).join('') || '<option value="">no distribution installed</option>'}</select></span></label>
-      <label class="check-row"><input type="radio" name="kind" value="ssh" ${k.kind === 'ssh' ? 'checked' : ''}><span><b>SSH</b> to <input name="host" list="sshHosts" value="${esc(k.host)}" placeholder="host or user@host" spellcheck="false" style="width:220px"><datalist id="sshHosts">${known.ssh.map(h => `<option value="${esc(h)}">`).join('')}</datalist></span></label>
+      <label class="check-row"><input type="radio" name="kind" value="ssh" ${k.kind === 'ssh' ? 'checked' : ''}><span><b>SSH</b> to <input name="host" list="sshHosts" value="${esc(k.host)}" placeholder="user@host, or paste a whole ssh command" spellcheck="false" style="width:300px"><datalist id="sshHosts">${known.ssh.map(h => `<option value="${esc(h)}">`).join('')}</datalist></span></label>
+      <div class="row ssh-opts" style="margin-left:28px">
+        <label class="field"><span>Key</span><select name="key"><option value="">From ~/.ssh/config or the agent</option>${(known.keys || []).map(p => `<option value="${esc(p)}" ${p === k.key ? 'selected' : ''}>${esc(p.split(/[\\/]/).pop())}</option>`).join('')}</select></label>
+        <label class="field" style="flex:0 0 90px"><span>Port</span><input name="port" value="${esc(k.port || '')}" placeholder="22" inputmode="numeric"></label>
+      </div>
     </div>
     <label class="field"><span>Folder to start in (optional; WSL takes /home/… or C:\\…, SSH a folder on that computer)</span><input name="dir" value="" placeholder="the workstream folder (PowerShell, WSL) or your home (SSH)" spellcheck="false" style="font-family:var(--mono)"></label>
     <label class="field"><span>Tab name (optional)</span><input name="name" maxlength="60" placeholder="pwsh, the distribution or the host"></label>
@@ -1167,13 +1171,13 @@ async function newShellDialog(ws) {
     const a = { workstreamId: ws.id, kind, name: fd.get('name').trim() || undefined, dir: kind === 'pwsh' ? undefined : fd.get('dir').trim() };
     if (kind === 'pwsh' && fd.get('dir').trim()) a.cwd = fd.get('dir').trim();
     if (kind === 'wsl') a.distro = fd.get('distro');
-    if (kind === 'ssh') a.host = fd.get('host').trim();
+    if (kind === 'ssh') Object.assign(a, { host: fd.get('host').trim(), key: fd.get('key') || undefined, port: +fd.get('port') || undefined });
     await api.call('newShell', a);
-    lastShell = { kind, distro: a.distro || k.distro, host: a.host || k.host };
+    lastShell = { kind, distro: a.distro || k.distro, host: a.host || k.host, key: a.key || k.key, port: a.port || k.port };
     setView('main');
   });
   // Typing a host or picking a distribution selects that kind.
-  form.querySelector('[name=host]').addEventListener('focus', () => { form.querySelector('[name=kind][value=ssh]').checked = true; });
+  for (const n of ['host', 'key', 'port']) form.querySelector(`[name=${n}]`).addEventListener('focus', () => { form.querySelector('[name=kind][value=ssh]').checked = true; });
   form.querySelector('[name=distro]').addEventListener('change', () => { const r = form.querySelector('[name=kind][value=wsl]'); if (!r.disabled) r.checked = true; });
 }
 // Pin a shell: a command polycli runs in it every time it starts, optionally once
