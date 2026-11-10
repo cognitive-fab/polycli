@@ -10,7 +10,7 @@
 - **Tests**: runs the project's `test*`, `check*`, `verify*`, `smoke*` and `ci` scripts (also in `app/` or `packages/*`) and shows tests, passed, failed, skipped, failing names, live progress and a history.
 
 ### Center
-- **Two or four panes** (▢ ◫ ⊞): each pane shows its own workstream and tabs; the same workstream in two panes shows two of its sessions or shells.
+- **One, two or four panes** (▢ ◫ ⊞): each pane shows its own workstream and tabs; the same workstream in two panes shows two of its sessions or shells.
 - **Notifications at the bottom**: a bar lists the sessions that need you or ask a question (with **Show**), and Cowork link requests and prompts to approve.
 - **✋** replaces the status dot of a workstream, session or tab while a session waits on your answers.
 

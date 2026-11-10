@@ -31,7 +31,7 @@ This needs Windows, Node 18 or newer on PATH (the hook helpers run with `node`),
 - **Keys.** The Keys button in the top bar lists the key-like variables saved in Windows (names only) with the workstreams that use them. Which keys a workstream uses is set in its ⚙ Settings.
 - **Shells.** PowerShell in the workstream folder, a WSL distribution (`wsl.exe -d`), or SSH (`ssh -t [-i key] [-p port] user@host`, hosts from `~/.ssh/config` suggested, a pasted ssh command understood). They end when polycli exits and are restarted when it starts again.
 - **Pinned shells.** A command run in the shell whenever polycli starts (and on ▶ Run), optionally after another shell is ready: a text in its output, a port that answers, or its command finished (a hidden OSC 633 marker reports the end).
-- **Views.** Main / Board / Architecture / Docs / Tests per workstream. The Board's card chats run `claude -p` in the workstream folder (Read/Write/Edit/Glob/Grep/WebSearch/WebFetch, no shell); cards are in `.polycli/`, card documents in `docs/cards/`. Tests runs `npm run` for test/check scripts and parses node:test, TAP and Jest summaries.
+- **Views.** Main / Board / Architecture / Docs / Tests per workstream. The Board's card chats run `claude -p` in the workstream folder (Read/Write/Edit/Glob/Grep/WebSearch/WebFetch, no shell); cards are in `.polycli/`, card documents in `docs/cards/`. Tests runs `npm run` for the `test*`, `check*`, `verify*`, `smoke*` and `ci` scripts (also in `app/` or `packages/*`) and parses node:test, TAP and Jest summaries.
 - **Panes.** One, two or four panes, each with a workstream and its tabs. A bar at the bottom lists sessions that need you or ask a question (✋, from the `AskUserQuestion` hooks) and Cowork requests.
 - **Remote Control.** New sessions start with `--remote-control <name>` unless turned off in the New session dialog (always off with an API key, a gateway or a cloud provider).
 - **Selections in Claude panes** grow past the edge: polycli scrolls Claude's transcript one wheel step at a time and collects the lines.
@@ -46,10 +46,8 @@ polycli writes only to `%APPDATA%\polycli`: state (workstream variable values en
 
 ## Not yet (later phases)
 
-- Splits and saved layouts. Tabs only for now.
+- Saved layouts beyond the one, two or four panes.
 - The command palette and the global hotkey.
-- The Cowork bridge and the artifacts panel.
-- WSL.
 
 ## Help
 

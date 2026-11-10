@@ -11,8 +11,8 @@ const { execFile } = require('child_process');
 const KINDS = ['pwsh', 'wsl', 'ssh'];
 // A host from ~/.ssh/config or user@host; never starts with "-" (an ssh option). No
 // "host:port": ssh doesn't read it, the port goes in its own field (-p).
-const HOST = /^(?:[\w.-]+@)?[\w][\w.-]*$/;
-const IPV6 = /^(?:[\w.-]+@)?[0-9a-f]*:[0-9a-f]*:[0-9a-f:.%\w]*$/i;   // fe80::1, user@::1, 2001:db8::1%eth0
+const HOST = /^(?:\w[\w.-]*@)?\w[\w.-]*$/;
+const IPV6 = /^(?:\w[\w.-]*@)?[0-9a-f]*:[0-9a-f]*:[0-9a-f:.%\w]*$/i;   // fe80::1, user@::1, 2001:db8::1%eth0
 const DISTRO = /^[\w][\w.-]*$/;
 
 // The end marker: OSC 633 "polycli-done;1" (success) or ";0", invisible in the terminal.
