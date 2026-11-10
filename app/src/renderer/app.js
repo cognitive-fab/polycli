@@ -272,7 +272,7 @@ function renderRail() {
       const sel = S.ui.activeTab;
       body = `<div class="ws-body">
         ${open.map(s => `<button class="item st-${s.state} ${sel === `s:${s.id}` || sel === `t:${s.id}` ? 'sel' : ''}" data-tab="s:${s.id}" title="${esc(STATE_LABEL[s.state] || s.state)}">${s.asking ? hand(s) : '<span class="dot"></span>'}<span class="label">${esc(s.role)}</span><span class="kind">claude</span></button>`).join('')}
-        ${shellsOf(w.id).map(h => `<button class="item ${h.state === 'running' ? 'st-idle' : 'st-closed'} ${sel === `h:${h.id}` ? 'sel' : ''}" data-tab="h:${h.id}"><span class="dot"></span><span class="label">${esc(h.name)}</span><span class="kind">shell</span></button>`).join('')}
+        ${shellsOf(w.id).map(h => `<button class="item ${h.state === 'running' ? 'st-idle' : 'st-closed'} ${sel === `h:${h.id}` ? 'sel' : ''}" data-tab="h:${h.id}"><span class="dot"></span><span class="label">${esc(h.name)}</span><span class="kind">${h.kind === 'wsl' ? 'wsl' : h.kind === 'ssh' ? 'ssh' : 'shell'}</span></button>`).join('')}
         ${closed.length ? `<button class="item closed-toggle" data-closed="${w.id}">${showClosed.has(w.id) ? '▾' : '▸'} Closed (${closed.length})</button>` : ''}
         ${showClosed.has(w.id) ? closed.map(s => `<button class="item st-${s.state}" data-reopen="${s.id}" title="Reopen"><span class="dot"></span><span class="label">${esc(s.role)}</span><span class="kind">${s.state === 'failed' ? 'failed' : 'reopen'}</span></button>`).join('') : ''}
         <div class="ws-actions">
@@ -520,7 +520,12 @@ function renderPanes() {
       const pinLine = h.pin
         ? `<div class="notice ${h.pinError ? 'err' : 'info'}"><span class="grow">📌 Runs <code>${esc(h.pin.command)}</code> when polycli starts${dep ? `, after <b>${esc(dep.name)}</b> ${h.pin.when === 'exit' ? 'finishes its command' : h.pin.when === 'text' ? `shows “${esc(h.pin.text)}”` : `answers on port ${esc(h.pin.port)}`}` : ''}${h.waitNote ? ` · <b>${esc(h.waitNote)}…</b>` : ''}${h.pinError ? ` · ${esc(h.pinError)}` : ''}</span><button class="btn" data-act="run-shell" title="Start a fresh shell and run the pinned command (waiting for the other shell first, if set)">▶ Run</button><button class="btn" data-act="pin-shell">Edit pin…</button></div>`
         : '';
-      top.innerHTML = `<div class="notice info"><span class="grow">${esc(h.agent === 'mistral' ? 'Mistral Vibe (vibe)' : h.command)} ·<button class="cwd btn" data-act="code-shell" style="font-family:var(--mono)">${esc(h.cwdShort)}</button>${stale ? ' · environment variables changed; open a new shell to get them' : ''}</span>${h.pin ? '' : '<button class="btn" data-act="pin-shell" title="Run a command in this shell every time polycli starts, optionally after another shell is ready">📌 Pin…</button>'}${h.state === 'exited' ? '<button class="btn" data-act="restart-shell">Restart shell</button>' : ''}</div>${pinLine}`;
+      // A WSL or SSH shell names its distribution or host; an SSH shell's folder is remote.
+      const where = h.kind === 'ssh'
+        ? (h.dir ? ` · <code>${esc(h.dir)}</code>` : '')
+        : ` ·<button class="cwd btn" data-act="code-shell" style="font-family:var(--mono)">${esc(h.kind === 'wsl' && h.dir ? h.dir : h.cwdShort)}</button>`;
+      const what = h.agent === 'mistral' ? 'Mistral Vibe (vibe)' : h.kind === 'wsl' ? `WSL · ${h.distro}` : h.kind === 'ssh' ? `ssh ${h.host}` : h.command;
+      top.innerHTML = `<div class="notice info"><span class="grow">${esc(what)}${where}${stale ? ' · environment variables changed; open a new shell to get them' : ''}</span>${h.pin ? '' : '<button class="btn" data-act="pin-shell" title="Run a command in this shell every time polycli starts, optionally after another shell is ready">📌 Pin…</button>'}${h.state === 'exited' ? '<button class="btn" data-act="restart-shell">Restart shell</button>' : ''}</div>${pinLine}`;
       top.dataset.shell = h.id;
       const waiting = h.state === 'waiting' || (h.state === 'failed' && !h.termLive);
       showTerm(pane, termId, !waiting || terms.has(termId) && h.termLive, h.state === 'waiting' ? `${h.waitNote || 'Waiting'}…` : h.pinError || 'Not started.');
@@ -1140,6 +1145,37 @@ function fitTerm(t) {
 }
 
 // ---------------- dialogs ----------------
+// A new shell: PowerShell on this computer, a WSL distribution, or another computer over
+// SSH (hosts from ~/.ssh/config are offered; ssh asks for passwords in the tab itself).
+// Shift+click on "+ Shell" skips this and opens PowerShell. The last kind is remembered.
+let lastShell = { kind: 'pwsh', distro: '', host: '' };
+async function newShellDialog(ws) {
+  const known = await call('shellKinds').catch(() => ({ wsl: [], ssh: [] }));
+  const k = lastShell;
+  const form = modal(`<h3>New shell in ${esc(ws.name)}</h3>
+    <div class="field shell-kinds">
+      <label class="check-row"><input type="radio" name="kind" value="pwsh" ${k.kind === 'pwsh' ? 'checked' : ''}><span><b>PowerShell</b> on this computer, in ${esc(ws.folderShort || ws.folder)}</span></label>
+      <label class="check-row"><input type="radio" name="kind" value="wsl" ${k.kind === 'wsl' ? 'checked' : ''} ${known.wsl.length ? '' : 'disabled'}><span><b>WSL</b> <select name="distro">${known.wsl.map(d => `<option ${d === k.distro ? 'selected' : ''}>${esc(d)}</option>`).join('') || '<option value="">no distribution installed</option>'}</select></span></label>
+      <label class="check-row"><input type="radio" name="kind" value="ssh" ${k.kind === 'ssh' ? 'checked' : ''}><span><b>SSH</b> to <input name="host" list="sshHosts" value="${esc(k.host)}" placeholder="host or user@host" spellcheck="false" style="width:220px"><datalist id="sshHosts">${known.ssh.map(h => `<option value="${esc(h)}">`).join('')}</datalist></span></label>
+    </div>
+    <label class="field"><span>Folder to start in (optional; WSL takes /home/… or C:\\…, SSH a folder on that computer)</span><input name="dir" value="" placeholder="the workstream folder (PowerShell, WSL) or your home (SSH)" spellcheck="false" style="font-family:var(--mono)"></label>
+    <label class="field"><span>Tab name (optional)</span><input name="name" maxlength="60" placeholder="pwsh, the distribution or the host"></label>
+    <div class="hint">Workstream environment variables reach PowerShell shells only. Shift+click “+ Shell” opens PowerShell right away.</div>
+    <div class="modal-actions"><button type="button" class="btn" data-cancel>Cancel</button><button class="btn primary">Open shell</button></div>`,
+  async fd => {
+    const kind = fd.get('kind') || 'pwsh';
+    const a = { workstreamId: ws.id, kind, name: fd.get('name').trim() || undefined, dir: kind === 'pwsh' ? undefined : fd.get('dir').trim() };
+    if (kind === 'pwsh' && fd.get('dir').trim()) a.cwd = fd.get('dir').trim();
+    if (kind === 'wsl') a.distro = fd.get('distro');
+    if (kind === 'ssh') a.host = fd.get('host').trim();
+    await api.call('newShell', a);
+    lastShell = { kind, distro: a.distro || k.distro, host: a.host || k.host };
+    setView('main');
+  });
+  // Typing a host or picking a distribution selects that kind.
+  form.querySelector('[name=host]').addEventListener('focus', () => { form.querySelector('[name=kind][value=ssh]').checked = true; });
+  form.querySelector('[name=distro]').addEventListener('change', () => { const r = form.querySelector('[name=kind][value=wsl]'); if (!r.disabled) r.checked = true; });
+}
 // Pin a shell: a command polycli runs in it every time it starts, optionally once
 // another shell of the workstream is ready. "Ready" is chosen, since a server never
 // finishes: its command ended, a text in its output, or a port that answers.
@@ -1489,7 +1525,7 @@ document.addEventListener('click', async e => {
   const sid = el.closest('[data-session]')?.dataset.session;
   const hid = el.closest('[data-shell]')?.dataset.shell;
   if (act === 'newClaude' && ws) return newSessionDialog(ws);
-  if (act === 'newShell' && ws) return call('newShell', { workstreamId: ws.id }).then(() => setView('main'));
+  if (act === 'newShell' && ws) return e.shiftKey ? call('newShell', { workstreamId: ws.id }).then(() => setView('main')) : newShellDialog(ws);
   if (act === 'newMistral' && ws) return call('newShell', { workstreamId: ws.id, agent: 'mistral' }).then(() => setView('main'));
   if (act === 'wsCode' && ws) return openVSCode({ workstreamId: ws.id }, e);
   if (act === 'wsSettings' && ws) return wsSettingsDialog(ws);

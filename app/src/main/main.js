@@ -170,7 +170,11 @@ const OPS = {
   reopenSession: a => manager.reopenSession(a.id),
   restartSession: a => manager.restartSession(a.id),
   deleteSession: a => manager.deleteSession(a.id),
-  newShell: a => manager.newShell(a).id,
+  newShell: a => manager.newShell({ workstreamId: a.workstreamId, cwd: a.cwd, name: a.name, agent: a.agent, kind: a.kind, distro: a.distro, host: a.host, dir: a.dir }).id,
+  shellKinds: async () => {
+    const k = require('./shellkinds');
+    return { wsl: await k.wslDistros(), ssh: k.sshHosts() };
+  },
   restartShell: a => manager.restartShell(a.id),
   closeShell: a => manager.closeShell(a.id),
   pinShell: a => manager.pinShell({ id: a.id, command: a.command, after: a.after || null, when: a.when, text: a.text, port: a.port, run: !!a.run }),

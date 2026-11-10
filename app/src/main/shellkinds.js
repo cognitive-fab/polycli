@@ -1,0 +1,83 @@
+'use strict';
+// The kinds of shell a tab can hold: PowerShell (the default), a WSL distribution, or
+// another computer over SSH. Each kind builds its own command line, including the way a
+// command runs first (a pinned command, Deploy, an agent CLI) and the hidden marker a
+// pinned command prints when it ends (pins.js waits for it).
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { execFile } = require('child_process');
+
+const KINDS = ['pwsh', 'wsl', 'ssh'];
+// A host from ~/.ssh/config or user@host[:port-less]; never starts with "-" (an ssh option).
+const HOST = /^(?:[\w.-]+@)?[\w][\w.:-]*$/;
+const DISTRO = /^[\w][\w.-]*$/;
+
+// The end marker: OSC 633 "polycli-done;1" (success) or ";0", invisible in the terminal.
+const PWSH_DONE = "; [Console]::Write([char]27 + ']633;polycli-done;' + [int]$? + [char]7)";
+const SH_DONE = "; s=$?; printf '\\033]633;polycli-done;%s\\007' \"$([ $s -eq 0 ] && echo 1 || echo 0)\"";
+const sq = s => `'${String(s).replace(/'/g, `'\\''`)}'`;   // POSIX single-quoting
+
+function wslDistros() {
+  return new Promise(resolve => {
+    execFile('wsl.exe', ['-l', '-q'], { encoding: 'buffer', windowsHide: true, timeout: 8000 }, (err, out) => {
+      if (err || !out) return resolve([]);
+      // wsl.exe writes UTF-16LE.
+      const list = out.toString('utf16le').replace(/\0/g, '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+      resolve(list.filter(d => DISTRO.test(d) && !/^docker-desktop/i.test(d)));
+    });
+  });
+}
+
+// Host aliases from ~/.ssh/config (no wildcard patterns).
+function sshHosts() {
+  try {
+    const text = fs.readFileSync(path.join(os.homedir(), '.ssh', 'config'), 'utf8');
+    const out = [];
+    for (const m of text.matchAll(/^\s*Host\s+(.+)$/gim)) for (const h of m[1].split(/\s+/)) if (h && !/[*?!]/.test(h) && HOST.test(h) && !out.includes(h)) out.push(h);
+    return out;
+  } catch { return []; }
+}
+
+// Checks the fields the renderer sends for a new shell; returns what goes on the record.
+function checkKind({ kind = 'pwsh', distro, host, dir }) {
+  if (!KINDS.includes(kind)) throw new Error('unknown kind of shell');
+  dir = typeof dir === 'string' ? dir.trim() : '';
+  if (dir.length > 300 || /[\0\r\n]/.test(dir)) throw new Error('The folder must be one line');
+  if (kind === 'wsl') {
+    if (!DISTRO.test(distro || '')) throw new Error('Pick a WSL distribution');
+    return { kind, distro, host: null, dir: dir || null };
+  }
+  if (kind === 'ssh') {
+    host = typeof host === 'string' ? host.trim() : '';
+    if (!HOST.test(host)) throw new Error('Give a host from your SSH config, or user@host');
+    return { kind, distro: null, host, dir: dir || null };
+  }
+  return { kind: 'pwsh', distro: null, host: null, dir: null };
+}
+
+// file + args for pty.spawn. `run` is a command to run first; `pinned` adds the marker.
+function launch(h, run, pinned) {
+  const kind = h.kind || 'pwsh';
+  if (kind === 'wsl') {
+    const args = ['-d', h.distro, '--cd', h.dir || h.cwd];
+    // --exec: wsl hands the script to bash as is (with "--" the default shell would expand
+    // it first, and $? in the marker would be gone). -li reads ~/.profile and ~/.bashrc,
+    // so tools set up there (nvm, ~/.local/bin) are found, as in the shell you get.
+    if (run) args.push('--exec', 'bash', '-lic', `${run}${pinned ? SH_DONE : ''}; exec "\${SHELL:-bash}" -l`);
+    return { file: 'wsl.exe', args };
+  }
+  if (kind === 'ssh') {
+    const cd = h.dir ? `cd ${sq(h.dir)} && ` : '';
+    if (!run && !cd) return { file: 'ssh.exe', args: [h.host] };
+    return { file: 'ssh.exe', args: ['-t', h.host, `${cd}${run ? `${run}${pinned ? SH_DONE : ''}; ` : ''}exec "$SHELL" -l`] };
+  }
+  const args = [...(h.args || ['-NoLogo'])];
+  if (run) args.push('-NoExit', '-Command', `${run}${pinned ? PWSH_DONE : ''}`);
+  return { file: 'pwsh.exe', args };
+}
+
+// What the shell's header shows.
+const label = h => (h.kind === 'wsl' ? `WSL · ${h.distro}` : h.kind === 'ssh' ? `ssh ${h.host}` : 'pwsh');
+
+module.exports = { wslDistros, sshHosts, checkKind, launch, label };

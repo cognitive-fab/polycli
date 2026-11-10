@@ -8,6 +8,7 @@
 // (slow, but authoritative on whether the session exists and is stopped).
 const crypto = require('crypto');
 const { Pins } = require('./pins');
+const kinds = require('./shellkinds');
 const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
@@ -458,19 +459,24 @@ class Manager extends EventEmitter {
   // ---------- shells ----------
   // `run` is a command for this first start only (Deploy). The stored args stay a plain
   // shell, so restarting polycli never runs it again.
-  newShell({ workstreamId, cwd, run, name, agent }) {
+  // kind: pwsh (default), wsl (a distribution) or ssh (a host); see shellkinds.js.
+  newShell({ workstreamId, cwd, run, name, agent, kind, distro, host, dir }) {
     const w = this.liveWs(workstreamId);
-    const h = { id: newId(), workstreamId: w.id, name: name || (agent ? AGENTS[agent].label : 'pwsh'), agent: agent || null, cwd: checkedDir(cwd || w.folder), command: 'pwsh.exe', args: ['-NoLogo'], open: true, state: 'running', createdAt: now() };
+    const k = agent ? kinds.checkKind({}) : kinds.checkKind({ kind, distro, host, dir });
+    const label = name ? cleanLabel(name, 'Name') : agent ? AGENTS[agent].label : k.kind === 'wsl' ? k.distro.toLowerCase() : k.kind === 'ssh' ? k.host : 'pwsh';
+    const h = { id: newId(), workstreamId: w.id, name: label, agent: agent || null, ...k, cwd: checkedDir(cwd || w.folder), command: kinds.launch(k, null).file, args: ['-NoLogo'], open: true, state: 'running', createdAt: now() };
     this.state.shells.push(h);
     this.state.ui.activeTab = `h:${h.id}`;
     this.startShell(h, run);
     return h;
   }
-  startShell(h, run) {
+  // `pinned`: run is the pinned command, followed by the end marker pins.js waits for.
+  startShell(h, run, pinned = false) {
     // A pinned shell runs its command, after the shell it waits for is ready (pins.js).
     if (!run && h.pin?.command) {
       run = this.pins.commandFor(h);
       if (!run) return this.changed();   // waiting, or the shell it waits for is gone
+      pinned = true;
     }
     this.pins.started(h);
     h.state = 'running';
@@ -482,8 +488,8 @@ class Manager extends EventEmitter {
     // An agent shell (Mistral Vibe) starts its CLI again on restart and when polycli
     // reopens; the shell stays behind it when the CLI exits.
     run = run || (h.agent && AGENTS[h.agent]?.command);
-    const args = run ? [...h.args, '-NoExit', '-Command', run] : h.args;
-    this.pty.spawn(`h:${h.id}`, h.command, args, { cwd: h.cwd, env: cleanEnv(extra), cols: h.cols || 120, rows: h.rows || 32 });
+    const { file, args } = kinds.launch(h, run, pinned);
+    this.pty.spawn(`h:${h.id}`, file, args, { cwd: h.cwd, env: cleanEnv(extra), cols: h.cols || 120, rows: h.rows || 32 });
     this.changed();
   }
   restartShell(id) {

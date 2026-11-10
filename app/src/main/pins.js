@@ -13,8 +13,6 @@ const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
 // Printed (invisibly, as an OSC sequence) after a pinned command ends: 1 = it succeeded.
 const DONE = /\x1b\]633;polycli-done;([01])\x07/;
 
-// The command line given to pwsh: the pinned command, then the end marker.
-const wrap = cmd => `${cmd}; [Console]::Write([char]27 + ']633;polycli-done;' + [int]$? + [char]7)`;
 
 function portOpen(port) {
   return new Promise(resolve => {
@@ -65,7 +63,7 @@ class Pins {
   commandFor(h) {
     h.pinError = null;
     h.waitNote = null;
-    if (!h.pin.after) return wrap(h.pin.command);
+    if (!h.pin.after) return h.pin.command;
     const dep = this.find(h.pin.after);
     if (!dep || !dep.open) { this.fail(h, 'The shell it waits for is closed'); return null; }
     h.state = 'waiting';
@@ -121,9 +119,9 @@ class Pins {
     if (!ready || this.waits.get(id) !== w) return;
     this.unwait(h);
     h.waitNote = null;
-    this.m.startShell(h, wrap(h.pin.command));
+    this.m.startShell(h, h.pin.command, true);
   }
   dispose() { if (this.timer) clearInterval(this.timer); }
 }
 
-module.exports = { Pins, wrap };
+module.exports = { Pins };

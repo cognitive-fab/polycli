@@ -60,6 +60,10 @@ When Claude needs a decision (a permission prompt, for example), the session tur
 
 **+ Shell** opens PowerShell in the workstream folder, with the workstream's environment variables. Shells end when polycli closes and new ones open in the same folders when it starts again; their history isn't kept.
 
+### WSL and SSH shells
+
+**+ Shell** asks which kind: **PowerShell** on this computer (the default), a **WSL** distribution, or **SSH** to another computer. SSH offers the hosts in your `~/.ssh/config` and accepts `user@host`; passwords and host-key questions are answered in the tab. An optional folder sets where the shell starts (a Linux path or `C:\…` for WSL, a folder on the other computer for SSH). The rail shows wsl or ssh next to these shells. Shift+click **+ Shell** opens PowerShell without asking. Workstream environment variables reach PowerShell shells only. A WSL or SSH shell can be pinned like any shell; its command runs in bash (WSL) or the remote login shell (SSH).
+
 ### Pinned shells
 
 **📌 Pin…** in a shell's header gives it a command that runs every time polycli starts (and on **▶ Run**), for example a server: `agentmesh up`. A pinned shell can **start after** another shell of the workstream is ready, meaning one of:
