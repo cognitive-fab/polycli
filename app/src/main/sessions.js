@@ -117,6 +117,7 @@ class Manager extends EventEmitter {
       if (id.startsWith('h:')) this.pins.onData(id.slice(2), data);
     });
     this.pins = new Pins(this);
+    this.shellRuns = new Set();       // shell ids with a ▶ Run in progress
     pty.on('exit', (id, code) => this.onTermExit(id, code));
     pty.on('error', (id, message) => this.onTermExit(id, -1, message));
   }
@@ -494,16 +495,28 @@ class Manager extends EventEmitter {
   async pinShell({ id, command, after, when, text, port, run }) {
     const h = this.shell(id);
     this.pins.setPin(h, { command, after, when, text, port });
-    if (run && h.pin) await this.runShell(id);
+    if (run && h.pin) return this.runShell(id);
+    // A shell that was waiting (or gave up) has no terminal: start it under its new
+    // settings, so an unpinned or changed shell is never left on "Waiting…".
+    if (['waiting', 'failed'].includes(h.state) && !this.pty.isLive(`h:${h.id}`)) {
+      this.pins.unwait(h);
+      this.startShell(h);
+    }
   }
   // Run a pinned shell's command again: a fresh shell, waiting first if it depends on another.
   async runShell(id) {
     const h = this.shell(id);
     if (!h.pin?.command) throw new Error('This shell has no pinned command');
-    this.pins.unwait(h);
-    await this.detachTerm(`h:${h.id}`);
-    h.open = true;
-    this.startShell(h);
+    if (this.shellRuns.has(h.id)) return;   // a double click: one run at a time
+    this.shellRuns.add(h.id);
+    try {
+      this.pins.unwait(h);
+      await this.detachTerm(`h:${h.id}`);
+      h.open = true;
+      this.startShell(h);
+    } finally {
+      this.shellRuns.delete(h.id);
+    }
   }
   async closeShell(id) {
     const h = this.shell(id);
