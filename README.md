@@ -1,6 +1,16 @@
 # polycli
 
-A Windows terminal for Claude Code workstreams. It groups Claude Code CLI sessions and shells by workstream, shows each session's version, model, effort, plan and folder, and keeps sessions alive across app restarts. A Cowork ↔ CLI bridge lets a Cowork task you link send prompts to a session and read the answers.
+A Windows terminal for Claude Code workstreams. It groups Claude Code CLI sessions and shells by workstream, shows each session's version, model, effort, plan and folder, and keeps sessions alive across app restarts. A Cowork ↔ CLI bridge lets a Cowork task you link send prompts to a session and read the answers, and lets a session send messages back.
+
+What it does, in short:
+
+- **Workstreams** with Claude sessions (Remote Control on, so you can continue on claude.ai or your phone), PowerShell, **WSL** and **SSH** shells, and Mistral Vibe.
+- **Pinned shells** that start a command (a server) whenever polycli starts, optionally after another shell is ready.
+- **One, two or four panes**; a bar at the bottom lists what needs you, and ✋ marks a session asking you a question.
+- Per workstream: a **Board** (Kanban, each card with its own Claude chat that writes specs), **Architecture** diagrams (archlens), **Docs** (Markdown preview and edit) and **Tests** (run test and check scripts, see the numbers).
+- Git line with Commit / Push / Deploy, time and tokens per workstream, selections that scroll Claude's transcript.
+
+What changed in each version: [`CHANGELOG.md`](CHANGELOG.md).
 
 - [Help](app/resources/help/HELP.md) explains how to use it, with screenshots (also under **? Help** in the app).
 - [`DESIGN.md`](DESIGN.md) is the design (source of truth).
