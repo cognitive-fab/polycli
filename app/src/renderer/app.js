@@ -1,7 +1,7 @@
 // polycli renderer: workstream rail, tabs, panes with session headers, xterm.js terminals.
 import { Terminal } from '../../node_modules/@xterm/xterm/lib/xterm.mjs';
 import { FitAddon } from '../../node_modules/@xterm/addon-fit/lib/addon-fit.mjs';
-import { showProject, hideProject, isDirty } from './views.js';
+import { showProject, hideProject, isDirty, renderMarkdown } from './views.js';
 
 const api = window.polycli;
 const $ = sel => document.querySelector(sel);
@@ -876,10 +876,41 @@ function dragScrollSelect(t) {
 const promptCache = new Map();   // session id → { seq, list, loading }
 let promptTip = null;
 
+// Some "prompts" are messages Claude Code itself wrote into the conversation as XML-like
+// blocks (<task-notification> when a background task ends, and the like). They are
+// shown by name with their fields, not as raw tags.
+const XML_NAMES = { 'task-notification': '🔔 Task notification', 'local-command-stdout': '⌨ Command output', 'command-name': '⌨ Command' };
+const tagTitle = t => XML_NAMES[t] || t.replace(/[-_]/g, ' ').replace(/^./, c => c.toUpperCase());
+function promptXml(text) {
+  const m = /^\s*<([a-z][\w-]*)>([\s\S]*?)<\/\1>([\s\S]*)$/i.exec(text || '');
+  if (!m) return null;
+  const fields = [];
+  for (const f of m[2].matchAll(/<([a-z][\w-]*)>([\s\S]*?)<\/\1>/gi)) fields.push([f[1], f[2].trim()]);
+  if (!fields.length && !m[2].trim()) return null;
+  return { tag: m[1], fields, body: fields.length ? '' : m[2].trim(), rest: m[3].trim() };
+}
 function promptLabel(p) {
   let t = p.text || '';
   if (p.cowork) t = t.replace(/^\[polycli [^\]]*\][^\n]*?Please handle it:\s*/, '');
+  const x = promptXml(t);
+  if (x) {
+    // The most telling short field: a description or summary, else the first one.
+    const f = Object.fromEntries(x.fields);
+    const gist = f.description || f.title || f.summary || x.body || x.fields.find(([k]) => !/id$/i.test(k))?.[1] || '';
+    return `${tagTitle(x.tag)}${f.status ? ` · ${f.status}` : ''}${gist ? ` — ${gist}` : ''}`.replace(/\s+/g, ' ').trim();
+  }
   return t.replace(/<\/?pasted_content[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+}
+// The hover card of such a block: short fields as a table, long ones as Markdown.
+function promptXmlHtml(x) {
+  const short = x.fields.filter(([, v]) => v.length <= 100 && !v.includes('\n'));
+  const long = x.fields.filter(f => !short.includes(f));
+  const md = s => renderMarkdown(s.length > 3000 ? s.slice(0, 3000) + '\n\n…' : s, { wsId: S.ui.activeWorkstream, dir: 'docs' });
+  return `<div class="tip-title">${esc(tagTitle(x.tag))}</div>
+    ${short.length ? `<table class="tip-fields">${short.map(([k, v]) => `<tr><th>${esc(k.replace(/[-_]/g, ' '))}</th><td${/id$/i.test(k) ? ' class="mono"' : ''}>${esc(v)}</td></tr>`).join('')}</table>` : ''}
+    ${long.map(([k, v]) => `<div class="tip-field"><div class="tip-key">${esc(k.replace(/[-_]/g, ' '))}</div><div class="pv-md">${md(v)}</div></div>`).join('')}
+    ${x.body ? `<div class="pv-md">${md(x.body)}</div>` : ''}
+    ${x.rest ? `<div class="pv-md">${md(x.rest)}</div>` : ''}`;
 }
 
 function promptTime(at) {
@@ -941,7 +972,8 @@ document.addEventListener('mouseover', e => {
   if (!promptTip) { promptTip = document.createElement('div'); promptTip.className = 'prompt-tip'; document.body.appendChild(promptTip); }
   const text = (x.p.text || '').replace(/<\/?pasted_content[^>]*>/g, '').trim();
   const lastClear = x.list.map(p => !!p.mark).lastIndexOf(true);
-  promptTip.innerHTML = `<div class="tip-body">${esc(text.length > 3000 ? text.slice(0, 3000) + '…' : text)}</div><small>${esc(promptTime(x.p.at))} · ${x.i < lastClear ? 'Before /clear: no longer in the transcript' : 'Click to scroll to it'}</small>`;
+  const xml = promptXml(text);
+  promptTip.innerHTML = `${xml ? `<div class="tip-body rich">${promptXmlHtml(xml)}</div>` : `<div class="tip-body">${esc(text.length > 3000 ? text.slice(0, 3000) + '…' : text)}</div>`}<small>${esc(promptTime(x.p.at))} · ${x.i < lastClear ? 'Before /clear: no longer in the transcript' : 'Click to scroll to it'}</small>`;
   promptTip.hidden = false;
   const body = promptTip.firstElementChild;
   body.classList.toggle('clipped', body.scrollHeight > body.clientHeight);

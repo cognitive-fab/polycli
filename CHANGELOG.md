@@ -22,6 +22,7 @@
 ### Claude sessions
 - New sessions start with **Remote Control** on, so they can be continued from claude.ai/code or the Claude mobile app (a remembered box in the New session dialog; off for API-key, gateway and cloud-provider setups).
 - **Selecting past the edge** of a Claude pane scrolls the transcript and keeps growing the selection; Ctrl+C copies all of it. The wheel clears a selection.
+- **Prompt list**: blocks Claude Code writes into the conversation as XML (a `<task-notification>` when a background task ends, and the like) show by name with their status and gist, and the hover card shows their fields, with long ones as Markdown.
 - **Time and tokens** per workstream: this week's Claude time and output tokens (resets Monday 07:00), and for billable workstreams your own time, with monthly history and CSV.
 
 ### Cowork bridge (extension 0.3.0)

@@ -392,3 +392,17 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .ssh-grid .ssh-host { grid-column: 1 / -1; }
 .ssh-grid .field { min-width: 0; margin-bottom: 8px; }
 .ssh-grid .field select, .ssh-grid .field input { width: 100%; min-width: 0; }
+
+/* Prompt hover card for blocks Claude Code writes as XML (<task-notification> …) */
+.prompt-tip .tip-body.rich { font-family: var(--sans); font-size: 12.5px; white-space: normal; }
+.prompt-tip .tip-title { font-weight: 600; margin-bottom: 6px; }
+.prompt-tip .tip-fields { border-collapse: collapse; margin-bottom: 6px; font-size: 12px; }
+.prompt-tip .tip-fields th { text-align: left; color: var(--text-faint); font-weight: 500; padding: 1px 10px 1px 0; vertical-align: top; text-transform: capitalize; white-space: nowrap; }
+.prompt-tip .tip-fields td { word-break: break-word; }
+.prompt-tip .tip-fields td.mono { font-family: var(--mono); word-break: break-all; }
+.prompt-tip .tip-key { color: var(--text-faint); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; margin: 6px 0 2px; }
+.prompt-tip .pv-md { padding: 0; font-size: 12.5px; line-height: 1.5; }
+.prompt-tip .pv-md > * { max-width: none; margin-left: 0; margin-right: 0; }
+.prompt-tip .pv-md h1, .prompt-tip .pv-md h2 { font-size: 14px; border: 0; padding: 0; margin: 8px 0 4px; }
+.prompt-tip .pv-md h3, .prompt-tip .pv-md h4 { font-size: 13px; margin: 6px 0 3px; }
+.prompt-tip .pv-md p, .prompt-tip .pv-md ul, .prompt-tip .pv-md ol { margin: 0 0 6px; }
