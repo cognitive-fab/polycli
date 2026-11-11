@@ -43,7 +43,9 @@ const dirKey = d => path.resolve(d).toLowerCase();
 // a turn that completed the work), stopped. So `done` alone does not mean ended.
 // A freshly launched session has no pid yet for a few seconds (more under load) and
 // reads `blocked`. Ended = no entry, or no pid together with `stopped` / `done`.
-const running = e => !!e && (e.pid != null || !['stopped', 'done'].includes(e.state));
+// After a reboot the background processes are gone and Claude lists those sessions with
+// status "failed" (no pid, no state): ended too.
+const running = e => !!e && (e.pid != null || !(['stopped', 'done', 'failed'].includes(e.state) || e.status === 'failed'));
 const waiting = e => e.status === 'idle' || e.state === 'blocked';
 // Pane writes that are not the user typing: focus and SGR mouse reports, the keys that
 // only scroll Claude's transcript (Page Up/Down, Ctrl+Home/End; the prompt list uses
@@ -107,6 +109,7 @@ class Manager extends EventEmitter {
     this.reattachLog = new Map();     // session id → recent reattach timestamps
     this.blockedPolls = new Map();    // session id → consecutive "blocked" polls while busy
     this.endedPolls = new Map();      // session id → consecutive stopped/done/missing polls
+    this.reviving = new Set();        // session ids reopenAll has yet to reattach or restart
     this.ops = new Map();             // session id → in-flight lifecycle operation
     this.lastOutput = new Map();      // terminal id → time of last output
     this.lastInput = new Map();       // terminal id → time the user last typed in the pane
@@ -884,7 +887,7 @@ class Manager extends EventEmitter {
     const list = await claude.agents();
     if (!list) return;
     for (const s of mine) {
-      if (this.ops.get(s.id)) continue;
+      if (this.ops.get(s.id) || this.reviving.has(s.id)) continue;   // reopenAll handles it
       const entry = list.find(a => a.id === s.bgId);
       s.bgState = entry ? [entry.status, entry.state].filter(Boolean).join(' / ') : 'missing';
       if (!running(entry)) {
@@ -928,7 +931,32 @@ class Manager extends EventEmitter {
 
   // ---------- startup ----------
   // Reattach sessions that were open when polycli last ran; restart shells.
+  // The sessions open when polycli last ran: reattach the ones still running, and start
+  // again (claude respawn: same conversation) the ones that ended while polycli was away,
+  // which is all of them after Windows restarts. Attaching to an ended session fails.
+  async reopenAll(list) {
+    // Until each is handled, the poll leaves them alone (it would close an ended one).
+    for (const s of list) this.reviving.add(s.id);
+    try { await this.reopenEach(list); } finally { for (const s of list) this.reviving.delete(s.id); }
+  }
+  async reopenEach(list) {
+    const agents = list.length ? await claude.agents() : null;
+    for (const s of list) {
+      this.reviving.delete(s.id);
+      const entry = agents && agents.find(a => a.id === s.bgId);
+      if (agents && entry && !running(entry)) {
+        store.event('session-revive', { session: s.id, was: entry.status || entry.state || 'ended' });
+        try { await this.restartSession(s.id); } catch (e) { this.set(s, { state: 'failed', error: clip(String(e.message || e), 300) }); }
+      } else if (agents && !entry) {
+        this.set(s, { state: 'failed', error: 'Claude no longer has this session; Delete it, or start a new one' });
+      } else {
+        this.attach(s);
+      }
+    }
+  }
+
   restore() {
+    const reopen = [];
     for (const s of this.state.sessions) {
       // A launch whose answer could not be read (colored output) left a running
       // background session behind with its id in the error text: adopt it.
@@ -941,9 +969,10 @@ class Manager extends EventEmitter {
       // re-derived. A stale busy settles via the busy + blocked rule in pollOnce.
       if (s.open && s.bgId && s.state !== 'closed' && !s.elsewhere) {
         if (!['busy', 'needs-you'].includes(s.state)) s.state = 'detached';
-        this.attach(s);
+        reopen.push(s);
       }
     }
+    this.reopenAll(reopen);
     for (const h of this.state.shells) if (h.open) this.startShell(h);
     this.changed();
   }
