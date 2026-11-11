@@ -940,15 +940,25 @@ class Manager extends EventEmitter {
     try { await this.reopenEach(list); } finally { for (const s of list) this.reviving.delete(s.id); }
   }
   async reopenEach(list) {
-    const agents = list.length ? await claude.agents() : null;
+    if (!list.length) return;
+    // `claude agents` can fail right after Windows starts: try a few times before
+    // falling back to plain attaches (which can't tell an ended session apart).
+    let agents = null;
+    for (let i = 0; i < 3 && !agents && !this.disposed; i++) {
+      if (i) await new Promise(r => setTimeout(r, 3000));
+      agents = await claude.agents();
+    }
     for (const s of list) {
+      if (this.disposed) return;   // polycli is quitting: start nothing more
       this.reviving.delete(s.id);
       const entry = agents && agents.find(a => a.id === s.bgId);
       if (agents && entry && !running(entry)) {
         store.event('session-revive', { session: s.id, was: entry.status || entry.state || 'ended' });
         try { await this.restartSession(s.id); } catch (e) { this.set(s, { state: 'failed', error: clip(String(e.message || e), 300) }); }
       } else if (agents && !entry) {
-        this.set(s, { state: 'failed', error: 'Claude no longer has this session; Delete it, or start a new one' });
+        // Nothing to reattach or restart: it goes to Closed with the reason (the poll
+        // would close it anyway, without one).
+        this.set(s, { state: 'closed', open: false, error: 'Claude no longer has this session; delete it, or start a new one' });
       } else {
         this.attach(s);
       }
