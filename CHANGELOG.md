@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+- **No more "Assertion failed … conpty.cc" crash**: node-pty 1.1.0 kept its terminal list without a lock, so terminals ending at the same moment (after a reboot, or several closing together) could trip an assertion that froze every terminal. polycli now uses node-pty 1.2.0-beta.18, which guards it.
+- **After a reboot**, sessions whose background process ended are started again (same conversation) instead of being reattached in a loop.
+
 ## 0.3.0 — 2026-11-10
 
 ### Workstream views
