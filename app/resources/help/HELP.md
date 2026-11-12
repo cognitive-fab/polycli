@@ -162,7 +162,7 @@ The bridge also works the other way. Ask a Claude session to send something to t
 
 ## Install and update
 
-Run **polycli-Setup-‹version›.exe**. It installs for you only (no administrator rights), in `%LOCALAPPDATA%\Programs\polycli` unless you pick another folder, and adds polycli to the Start menu and the desktop. To update, run the newer installer: it closes polycli first (your Claude sessions keep running and are reattached when polycli starts again; shells start again). Uninstall from **Settings → Apps**; your workstreams and settings in `%APPDATA%\polycli` are kept.
+Run **polycli-Setup-‹version›.exe**. It asks who to install for: **Only for me** (the default, no administrator rights, in `%LOCALAPPDATA%\Programs\polycli`) or all users (asks for administrator rights); you can pick another folder. It adds polycli to the Start menu and the desktop. To update, run the newer installer: it closes polycli first (your Claude sessions keep running and are reattached when polycli starts again; shells start again). Uninstall from **Settings → Apps**; your workstreams and settings in `%APPDATA%\polycli` are kept.
 
 The installer isn't signed yet, so Windows SmartScreen may say "Windows protected your PC": click **More info**, then **Run anyway**. The zip (**polycli-‹version›-win-x64.zip**) is the same app without installing: unzip it anywhere and run `polycli.exe`.
 

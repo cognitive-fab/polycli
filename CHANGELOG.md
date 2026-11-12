@@ -1,7 +1,7 @@
 # Changelog
 
 ## Unreleased
-- **Windows installer**: `npm run dist` builds `polycli-Setup-‹version›.exe` (per user, no administrator rights, Start menu and desktop shortcuts, updates in place, keeps your data on uninstall) and a zip to run without installing. A check after each build confirms the icon, the version and that the packaged app runs (window, hooks, help, bridge extension, a shell).
+- **Windows installer**: `npm run dist` builds `polycli-Setup-‹version›.exe` (for you only by default, no administrator rights; Start menu and desktop shortcuts, updates in place, keeps your data on uninstall) and a zip to run without installing. A check after each build confirms the icon, the version and that the packaged app runs (window, hooks, help, bridge extension, a shell).
 - **polycli has its own icon** (window, taskbar, installer, shortcuts).
 - At startup, polycli says if **Claude Code or Node.js is missing** from PATH, instead of sessions that silently never report their state.
 - **Cowork requests open as a dialog** (one at a time; **Later** leaves them in the bottom bar), and an **auto mode** (⚙ settings, or the box in the dialog) accepts them without asking: links to a workstream the task names, and prompts (those starting with a command character still ask).

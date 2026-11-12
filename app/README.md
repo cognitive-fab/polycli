@@ -21,7 +21,7 @@ npm run dist
 
 This writes to `dist/`:
 
-- `polycli-Setup-‹version›.exe`: the installer (per user, no administrator rights, Start menu and desktop shortcuts, closes the installed polycli before updating it, keeps `%APPDATA%\polycli` on uninstall);
+- `polycli-Setup-‹version›.exe`: the installer (for the current user by default, no administrator rights; all users can be chosen; Start menu and desktop shortcuts, closes the installed polycli before updating it, keeps `%APPDATA%\polycli` on uninstall);
 - `polycli-‹version›-win-x64.zip`: the same app to unzip and run, without installing;
 - `win-unpacked/`: the app as installed.
 
