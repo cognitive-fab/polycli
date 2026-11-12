@@ -6,6 +6,8 @@
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
+    "test": "node --test src/main/__tests__/*.test.js",
+    "test:unit": "node --test src/main/__tests__/tests.test.js",
     "smoke": "node scripts/smoke.js",
     "persist": "node scripts/persist.js",
     "bridge:pack": "npx -y @anthropic-ai/mcpb pack ../bridge ../out/polycli-bridge.mcpb"
