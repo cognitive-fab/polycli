@@ -285,7 +285,7 @@ class Manager extends EventEmitter {
   setUi(patch) {
     for (const k of ['activeTab', 'collapsed']) if (k in patch) this.state.ui[k] = patch[k];
     if ('theme' in patch && ['system', 'light', 'dark'].includes(patch.theme)) this.state.ui.theme = patch.theme;
-    if ('view' in patch && ['main', 'board', 'architecture', 'docs', 'tests'].includes(patch.view)) this.state.ui.view = patch.view;
+    if ('view' in patch && ['main', 'board', 'architecture', 'docs', 'tests', 'artifacts'].includes(patch.view)) this.state.ui.view = patch.view;
     if ('remoteDefault' in patch) this.state.ui.remoteDefault = !!patch.remoteDefault;
     // Split view: 1, 2 or 4 panes, each showing a workstream and one of its tabs.
     if (patch.split && typeof patch.split === 'object') {
