@@ -946,12 +946,15 @@ class Manager extends EventEmitter {
     let agents = null;
     for (let i = 0; i < 3 && !agents && !this.disposed; i++) {
       if (i) await new Promise(r => setTimeout(r, 3000));
+      if (this.disposed) return;
       agents = await claude.agents();
     }
     for (const s of list) {
       if (this.disposed) return;   // polycli is quitting: start nothing more
       this.reviving.delete(s.id);
       const entry = agents && agents.find(a => a.id === s.bgId);
+      // You restarted, reopened or closed it yourself meanwhile: that action wins.
+      if (this.ops.get(s.id) || !s.open) continue;
       if (agents && entry && !running(entry)) {
         store.event('session-revive', { session: s.id, was: entry.status || entry.state || 'ended' });
         try { await this.restartSession(s.id); } catch (e) { this.set(s, { state: 'failed', error: clip(String(e.message || e), 300) }); }

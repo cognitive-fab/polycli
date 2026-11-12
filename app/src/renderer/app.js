@@ -93,6 +93,7 @@ function render() {
   renderBilling();
   renderInbox();
   renderCowork();
+  coworkRequestDialog();
   renderRail();
   renderTabs();
   renderPanes();
@@ -184,7 +185,6 @@ function renderCowork() {
   if (!cw.pendingLinks.length && !cw.approvals.length && !waiting.length) { bar.hidden = true; bar.innerHTML = ''; placeToast(); return; }
   // Don't redraw while the user is choosing in a select or editing.
   if (bar.contains(document.activeElement) && document.activeElement.matches('select, textarea')) return;
-  const wsOptions = sel => liveWorkstreams().map(w => `<option value="${w.id}" ${w.id === sel ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
   const rows = [];
   for (const s of waiting.slice(0, 4)) {
     const w = S.workstreams.find(x => x.id === s.workstreamId);
@@ -195,27 +195,57 @@ function renderCowork() {
   }
   if (waiting.length > 4) rows.push(`<div class="cw-row"><span class="grow">${waiting.length - 4} more session${waiting.length - 4 === 1 ? '' : 's'} waiting: see "need you" at the top right</span></div>`);
   const links = cw.pendingLinks;
-  links.slice(0, 3).forEach(l => rows.push(`<div class="cw-row" data-cw-link="${l.id}">
+  links.slice(0, 3).forEach(l => rows.push(linkRow(l)));
+  if (links.length > 3) rows.push(`<div class="cw-row"><span class="grow">${links.length - 3} more link request${links.length - 3 === 1 ? '' : 's'}</span></div>`);
+  if (links.length > 1) rows.push(`<div class="cw-row"><span class="grow"></span><button class="btn" data-cw="reject-all">Reject all requests</button><button class="btn" data-cw="mute">Mute requests for 15 min</button></div>`);
+  for (const a of cw.approvals) rows.push(turnRow(a));
+  bar.innerHTML = rows.join('');
+  bar.hidden = false;
+  placeToast();
+}
+
+// A Cowork request as a row: in the bottom bar, and in the dialog below.
+const wsOptions = sel => liveWorkstreams().map(w => `<option value="${w.id}" ${w.id === sel ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
+const linkRow = l => `<div class="cw-row" data-cw-link="${l.id}">
       <span class="cw-tag">Cowork</span>
       <span class="grow">Task <b>${esc(l.title)}</b> wants to link to ${l.requested ? `workstream <b>${esc(l.requested)}</b>` : 'a workstream'}${l.requested && !l.workstreamId ? ' <span class="warn-text">(no workstream with that name)</span>' : ''}. Linking lets it send prompts to that workstream's sessions; each prompt still needs your approval unless you allow it.</span>
       <select class="cw-ws">${wsOptions(l.workstreamId || S.ui.activeWorkstream)}</select>
-      <button class="btn primary" data-cw="link-approve">Link</button>
-      <button class="btn" data-cw="link-reject">Reject</button>
-    </div>`));
-  if (links.length > 3) rows.push(`<div class="cw-row"><span class="grow">${links.length - 3} more link request${links.length - 3 === 1 ? '' : 's'}</span></div>`);
-  if (links.length > 1) rows.push(`<div class="cw-row"><span class="grow"></span><button class="btn" data-cw="reject-all">Reject all requests</button><button class="btn" data-cw="mute">Mute requests for 15 min</button></div>`);
-  for (const a of cw.approvals) {
-    rows.push(`<div class="cw-row cw-approval" data-cw-turn="${a.id}">
+      <button type="button" class="btn primary" data-cw="link-approve">Link</button>
+      <button type="button" class="btn" data-cw="link-reject">Reject</button>
+    </div>`;
+const turnRow = a => `<div class="cw-row cw-approval" data-cw-turn="${a.id}">
       <span class="cw-tag">Cowork</span>
       <div class="grow"><div>Task <b>${esc(a.linkTitle)}</b> wants to send this prompt to <b>${esc(a.sessionName)}</b>${a.forced ? ' <span class="warn-text">(starts with a command character, so it always asks)</span>' : ''}:</div>
         <pre class="cw-text"><span class="cw-first">${esc(a.firstLine)}</span>
 ${esc(a.text)}</pre></div>
-      <div class="cw-acts"><button class="btn primary" data-cw="turn-approve">Send</button><button class="btn" data-cw="turn-reject">Reject</button></div>
-    </div>`);
+      <div class="cw-acts"><button type="button" class="btn primary" data-cw="turn-approve">Send</button><button type="button" class="btn" data-cw="turn-reject">Reject</button></div>
+    </div>`;
+
+// Cowork requests also open as a dialog, one at a time, so they can't be missed. "Later"
+// leaves the request in the bottom bar and doesn't open it again. With auto mode on (the
+// box here, or ⚙ settings), polycli accepts them itself and no dialog opens.
+const cwOffered = new Set();
+function coworkRequestDialog() {
+  const cw = S.cowork;
+  const form = $('#modal'), back = $('#modalBack');
+  if (!cw) return;
+  const pending = [...cw.pendingLinks.map(l => ({ id: l.id, html: () => linkRow(l), what: 'link' })), ...cw.approvals.map(a => ({ id: a.id, html: () => turnRow(a), what: 'prompt' }))];
+  const shown = form.dataset.cw;
+  if (shown) {
+    if (back.hidden) delete form.dataset.cw;                                            // closed (Later, Esc)
+    else if (!pending.some(p => p.id === shown)) { back.hidden = true; delete form.dataset.cw; }   // decided
+    else return;
   }
-  bar.innerHTML = rows.join('');
-  bar.hidden = false;
-  placeToast();
+  if (!back.hidden) return;   // another dialog is open: wait for it
+  const next = pending.find(p => !cwOffered.has(p.id));
+  if (!next) return;
+  cwOffered.add(next.id);
+  modal(`<h3>Cowork ${next.what === 'link' ? 'link request' : 'prompt to approve'}</h3>
+    <div class="cw-dialog">${next.html()}</div>
+    <label class="check-row"><input type="checkbox" id="cwAuto"><span>Accept Cowork requests automatically from now on (links to an existing workstream, and prompts; ⚙ settings turns it off)</span></label>
+    <div class="modal-actions"><button type="button" class="btn" data-cancel>Later</button></div>`, async () => {}, { wide: next.what === 'prompt' });
+  form.dataset.cw = next.id;
+  form.querySelector('#cwAuto').onchange = e => { if (e.target.checked) call('coworkAuto', { on: true }).then(() => toast('Cowork requests are now accepted automatically')); };
 }
 
 async function coworkClick(el) {
@@ -1259,6 +1289,7 @@ function ask(title, label, value = '') {
 }
 function modal(html, onSubmit, { wide = false } = {}) {
   const back = $('#modalBack'), form = $('#modal');
+  delete form.dataset.cw;   // no longer the Cowork request dialog (coworkRequestDialog sets it)
   form.innerHTML = html + `<div class="error" id="modalErr"></div>`;
   form.classList.toggle('wide', wide);
   form.classList.remove('help-modal');
@@ -1498,10 +1529,13 @@ async function appSettingsDialog() {
   const form = modal(`<h3>polycli settings</h3>
     <label class="check-row"><input type="checkbox" name="login" ${li.on ? 'checked' : ''}><span>Start polycli when I sign in to Windows</span></label>
     <p class="hint">${li.packaged ? '' : 'polycli runs from source here, so Windows starts Electron with this app folder; Startup apps in Windows Settings lists it as Electron. '}Claude sessions that were open are reattached when it starts; after a restart of Windows they start again with their conversation.</p>
+    <label class="check-row"><input type="checkbox" name="cwAuto" ${S.cowork?.auto ? 'checked' : ''}><span>Accept Cowork requests automatically: a link to a workstream the task names, and every prompt (one starting with /, !, # or @ still asks). Otherwise each request opens a dialog.</span></label>
     <div class="modal-actions"><button type="button" class="btn" data-cancel>Cancel</button><button class="btn primary">Save</button></div>`,
   async fd => {
     const on = fd.get('login') === 'on';
     if (on !== li.on) { const r = await call('setLoginItem', { on }); toast(r.on ? 'polycli will start when you sign in' : 'polycli will no longer start when you sign in'); }
+    const auto = fd.get('cwAuto') === 'on';
+    if (auto !== !!S.cowork?.auto) { await call('coworkAuto', { on: auto }); toast(auto ? 'Cowork requests are now accepted automatically' : 'Cowork requests ask again'); }
   });
   return form;
 }
@@ -1630,6 +1664,7 @@ $('#appSettingsBtn').onclick = () => appSettingsDialog();
 $('#inboxBtn').onclick = e => { e.stopPropagation(); $('#inboxMenu').hidden = !$('#inboxMenu').hidden; };
 
 api.onState(s => { S = s; render(); });
+api.onCoworkAuto(e => { if (e.kind === 'link') toast(`Cowork task “${e.title}” linked to ${e.workstream} (automatic)`); });
 api.onFocusTab(async tab => {
   const s = S.sessions.find(x => x.id === tab.slice(2));
   if (s) await call('setActive', { id: s.workstreamId });

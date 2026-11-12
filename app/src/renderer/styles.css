@@ -406,3 +406,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .prompt-tip .pv-md h1, .prompt-tip .pv-md h2 { font-size: 14px; border: 0; padding: 0; margin: 8px 0 4px; }
 .prompt-tip .pv-md h3, .prompt-tip .pv-md h4 { font-size: 13px; margin: 6px 0 3px; }
 .prompt-tip .pv-md p, .prompt-tip .pv-md ul, .prompt-tip .pv-md ol { margin: 0 0 6px; }
+
+/* A Cowork request in its dialog */
+.cw-dialog .cw-row { flex-wrap: wrap; border: 0; padding: 0 0 12px; font-size: 13px; color: var(--text); }
+.cw-dialog .cw-row .grow { flex: 1 1 100%; }
+.cw-dialog .cw-tag { display: none; }
