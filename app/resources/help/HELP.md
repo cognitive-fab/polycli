@@ -144,7 +144,7 @@ You manage the connection: open the Cowork task, open (or reopen) the Claude ses
 
 **In a Cowork task**, ask for it in plain words, for example: *"Use the polycli tools: link this task to the acme-api workstream, then ask the main session to run the tests and tell me the result."*
 
-1. **Link.** The task asks to link; a **Cowork** request appears in the bar at the bottom of the window. Pick the workstream and click **Link**, or **Reject**. Several requests can be rejected at once, or muted for 15 minutes.
+1. **Link.** The task asks to link; the request opens as a dialog (and stays in the bar at the bottom if you choose **Later**). Pick the workstream and click **Link**, or **Reject**. Several requests can be rejected at once, or muted for 15 minutes. To skip the dialogs, tick **Accept Cowork requests automatically** (in the dialog, or in **⚙** settings): a link to a workstream the task names is made at once (polycli shows a short note), and its prompts are sent without asking, except one starting with /, !, # or @. A request without a workstream still asks.
 2. **Prompts.** Each prompt the task wants to send appears in the bar, in full, with the target session. Click **Send** or **Reject**.
 
 ![A prompt from Cowork waiting for approval](cowork-approval.png)

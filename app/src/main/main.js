@@ -118,6 +118,7 @@ const OPS = {
   coworkDecide: a => cowork.decide({ kind: a.kind, id: a.id, decision: a.decision === 'approve' ? 'approve' : 'reject', workstreamId: a.workstreamId, text: a.text }),
   coworkRejectAllLinks: () => cowork.rejectAllLinks(),
   coworkMute: a => cowork.mute(a.minutes),
+  coworkAuto: a => cowork.setAuto(!!a.on),
   coworkRevoke: a => cowork.revoke(a.id),
   installBridge: () => require('./bridge').installExtension(),
   // Artifacts come from Cowork: links open only if https, files are only revealed in
@@ -233,6 +234,8 @@ app.whenReady().then(() => {
     idleSeconds: () => powerMonitor.getSystemIdleTime(),
   });
   cowork.on('attention', () => { if (win && !win.isDestroyed() && !win.isFocused()) win.flashFrame(true); });
+  // Auto mode links a task without asking: say so in the window (a toast), once.
+  cowork.on('auto', e => send('cowork-auto', e));
   const bridge = new BridgeServer(cowork);
   bridge.on('error', e => console.error(`bridge pipe (${bridgePipeName()}) failed`, e.message));
   bridge.start();

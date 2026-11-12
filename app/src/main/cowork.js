@@ -177,6 +177,15 @@ class Cowork extends EventEmitter {
     const l = { id: rid('L', 4), tokenHash: sha(token), title, requested: a.workstream ? String(a.workstream).slice(0, 100) : null, workstreamId: w?.id || null, state: 'pending', createdAt: now(), sessions: [] };
     this.c.links.push(l);
     this.event('link-request', { link: l.id, title });
+    // Auto mode (the user's choice in polycli): a request naming an existing workstream
+    // is linked at once. One without a workstream still waits for the user to pick one.
+    if (this.c.auto && w) {
+      Object.assign(l, { state: 'active', decidedAt: now(), auto: true });
+      this.event('link-decision', { link: l.id, decision: 'approve', auto: true });
+      this.emit('auto', { kind: 'link', title, workstream: w.name });
+      this.changed();
+      return { link: token, state: 'active', workstream: w.name, note: 'Linked (the user accepts Cowork requests automatically). Keep this link token for the rest of the task.' };
+    }
     this.emit('attention', { kind: 'link', title });
     this.changed();
     return { link: token, state: 'pending', expires_in_seconds: LINK_TTL_MS / 1000, note: 'Keep this link token for the rest of the task. The user approves it in polycli; poll polycli_link_status (at most every 10 s).' };
@@ -215,7 +224,9 @@ class Cowork extends EventEmitter {
       const text = this.checkText(a.text);
       if (!s.open || s.state === 'closed') throw new Error(`Session ${s.name} is closed. Ask the user to reopen it in polycli.`);
       const w = this.ws(s.workstreamId);
-      const ask = (w.coworkSend || 'ask') !== 'allow' || MODE_PREFIX.test(text);
+      // Sent without asking when the workstream allows it or auto mode is on; a prompt
+      // starting with a command character (/, !, #, @) always asks.
+      const ask = ((w.coworkSend || 'ask') !== 'allow' && !this.c.auto) || MODE_PREFIX.test(text);
       t = { id: rid('t_'), linkId: l.id, sessionId: s.id, sessionName: s.name, clientRef: ref, text, state: ask ? 'awaiting-approval' : 'queued', approvedBy: ask ? null : 'policy', createdAt: now(), files: [] };
       this.c.turns.push(t);
       if (!l.sessions.includes(s.id)) l.sessions.push(s.id);
@@ -311,6 +322,17 @@ class Cowork extends EventEmitter {
   }
   rejectAllLinks() {
     for (const l of this.c.links) if (l.state === 'pending') Object.assign(l, { state: 'rejected', decidedAt: now() });
+    this.changed();
+  }
+  // Auto mode: links naming an existing workstream and prompts are accepted without
+  // asking. Turning it on also accepts what is waiting now (same rules).
+  setAuto(on) {
+    this.c.auto = !!on;
+    if (on) {
+      for (const l of this.c.links) if (l.state === 'pending' && l.workstreamId && this.ws(l.workstreamId) && !this.ws(l.workstreamId).archived) this.decide({ kind: 'link', id: l.id, decision: 'approve' });
+      for (const t of this.c.turns) if (t.state === 'awaiting-approval' && !MODE_PREFIX.test(t.text)) this.decide({ kind: 'turn', id: t.id, decision: 'approve' });
+    }
+    this.event('auto', { on: !!on });
     this.changed();
   }
   mute(minutes) {
@@ -460,6 +482,7 @@ class Cowork extends EventEmitter {
     const linkTitle = id => this.c.links.find(l => l.id === id)?.title || '';
     return {
       mutedUntil: this.c.mutedUntil && this.c.mutedUntil > now() ? this.c.mutedUntil : null,
+      auto: !!this.c.auto,
       pendingLinks,
       links: this.c.links.filter(l => l.state === 'active' || l.state === 'revoked').map(l => ({ id: l.id, title: l.title, workstreamId: l.workstreamId, state: l.state, createdAt: l.createdAt, sessions: l.sessions })),
       approvals: this.c.turns.filter(t => t.state === 'awaiting-approval').map(t => ({ kind: 'turn', id: t.id, linkTitle: linkTitle(t.linkId), sessionId: t.sessionId, sessionName: t.sessionName, firstLine: this.prefixFor(t, 'user'), text: t.text, forced: MODE_PREFIX.test(t.text), createdAt: t.createdAt })),

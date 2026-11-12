@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- **Cowork requests open as a dialog** (one at a time; **Later** leaves them in the bottom bar), and an **auto mode** (⚙ settings, or the box in the dialog) accepts them without asking: links to a workstream the task names, and prompts (those starting with a command character still ask).
 - **No more "Assertion failed … conpty.cc" crash**: node-pty 1.1.0 kept its terminal list without a lock, so terminals ending at the same moment (after a reboot, or several closing together) could trip an assertion that froze every terminal. polycli now uses node-pty 1.2.0-beta.18, which guards it.
 - **After a reboot**, sessions whose background process ended are started again (same conversation) instead of being reattached in a loop.
 
