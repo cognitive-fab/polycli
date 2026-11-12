@@ -7,7 +7,7 @@ What it does, in short:
 - **Workstreams** with Claude sessions (Remote Control on, so you can continue on claude.ai or your phone), PowerShell, **WSL** and **SSH** shells, and Mistral Vibe.
 - **Pinned shells** that start a command (a server) whenever polycli starts, optionally after another shell is ready.
 - **One, two or four panes**; a bar at the bottom lists what needs you, and ✋ marks a session asking you a question.
-- Per workstream: a **Board** (Kanban, each card with its own Claude chat that writes specs), **Architecture** diagrams (archlens), **Docs** (Markdown preview and edit) and **Tests** (run test and check scripts, see the numbers).
+- Per workstream: a **Board** (Kanban, each card with its own Claude chat that writes specs), **Architecture** diagrams (archlens), **Docs** (Markdown preview and edit), **Tests** (run test and check scripts, see the numbers) and **Artifacts** (claude.ai artifacts, documents and Cowork reports, opened inside polycli).
 - Git line with Commit / Push / Deploy, time and tokens per workstream, selections that scroll Claude's transcript.
 
 What changed in each version: [`CHANGELOG.md`](CHANGELOG.md).

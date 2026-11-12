@@ -712,8 +712,18 @@ class Manager extends EventEmitter {
       case 'PostToolUse': {
         if (input.tool_name === 'AskUserQuestion') { s.asking = null; return this.changed(); }   // answered
         this.gitSoon(s);
+        // A page the session published with Claude Code's Artifact tool: its claude.ai
+        // link (the Artifacts view lists it). Listing artifacts returns links too; only a
+        // publish answers with a url of its own.
+        const pub = require('./artifacts').publishedArtifact(input.tool_name, input.tool_response);
+        if (pub) {
+          s.links = (s.links || []).filter(l => l.url !== pub.url);
+          s.links.unshift({ ...pub, at: now() });
+          s.links.length = Math.min(s.links.length, 50);
+          return this.changed();
+        }
         const f = input.tool_input?.file_path;
-        if (f && DOC_EXT.test(f) && !s.documents.some(d => d.path === f)) {
+        if (input.tool_name !== 'Artifact' && f && DOC_EXT.test(f) && !s.documents.some(d => d.path === f)) {
           s.documents.unshift({ path: f, tool: input.tool_name, at: now() });
           s.documents.length = Math.min(s.documents.length, 50);
           this.changed();

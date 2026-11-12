@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data: polycli-view:; frame-src polycli-view:">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data: polycli-view: polycli-art:; frame-src polycli-view: polycli-art:">
   <title>polycli</title>
   <link rel="stylesheet" href="../../node_modules/@xterm/xterm/css/xterm.css">
   <link rel="stylesheet" href="styles.css">
@@ -36,6 +36,7 @@
         <button data-view="architecture" title="The archlens diagrams in architecture/ and docs/architecture/">Architecture</button>
         <button data-view="docs" title="The documents in docs/: preview and edit Markdown">Docs</button>
         <button data-view="tests" title="Run the project's test and check scripts and see the results">Tests</button>
+        <button data-view="artifacts" title="What Cowork tasks reported and Claude sessions made: claude.ai artifacts and documents, opened here">Artifacts</button>
         <span class="viewbar-gap"></span>
         <span class="layout-btns" role="group" aria-label="Panes">
           <button data-layout="1" title="One pane">▢</button>

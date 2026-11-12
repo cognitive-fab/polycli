@@ -98,7 +98,7 @@ function render() {
   renderTabs();
   renderPanes();
   const none = !liveWorkstreams().length;
-  const view = ws && ['board', 'architecture', 'docs', 'tests'].includes(S.ui.view) ? S.ui.view : 'main';
+  const view = ws && ['board', 'architecture', 'docs', 'tests', 'artifacts'].includes(S.ui.view) ? S.ui.view : 'main';
   $('#viewbar').hidden = !ws;
   for (const b of document.querySelectorAll('#viewbar [data-view]')) b.classList.toggle('active', b.dataset.view === view);
   $('#empty').hidden = !none;
@@ -179,7 +179,7 @@ function renderCowork() {
   const bar = $('#coworkStrip');
   // Sessions waiting on you: a permission prompt or a question (✋). Those on screen in a
   // pane are left out: their own pane shows it.
-  const onMain = !['board', 'architecture', 'docs', 'tests'].includes(S.ui.view);   // as render() decides
+  const onMain = !['board', 'architecture', 'docs', 'tests', 'artifacts'].includes(S.ui.view);   // as render() decides
   const onScreen = new Set(onMain && liveWorkstreams().length ? slotPlan().map(p => p.tab).filter(Boolean) : []);
   const waiting = S.sessions.filter(s => (s.open || s.termLive) && (s.state === 'needs-you' || s.asking) && !onScreen.has(`s:${s.id}`));
   if (!cw.pendingLinks.length && !cw.approvals.length && !waiting.length) { bar.hidden = true; bar.innerHTML = ''; placeToast(); return; }

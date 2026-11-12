@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- **Artifacts view**: per workstream, the claude.ai artifacts its sessions published, the documents they wrote and what its Cowork tasks reported, in one list that updates as they report. Click one to open it inside polycli: web pages in a built-in viewer (sign in to claude.ai there once), local HTML, images and Markdown beside the list.
 - **Windows installer**: `npm run dist` builds `polycli-Setup-‹version›.exe` (for you only by default, no administrator rights; Start menu and desktop shortcuts, updates in place, keeps your data on uninstall) and a zip to run without installing. A check after each build confirms the icon, the version and that the packaged app runs (window, hooks, help, bridge extension, a shell).
 - **polycli has its own icon** (window, taskbar, installer, shortcuts).
 - At startup, polycli says if **Claude Code or Node.js is missing** from PATH, instead of sessions that silently never report their state.

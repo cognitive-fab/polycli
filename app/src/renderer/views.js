@@ -4,6 +4,7 @@
 
 import { boardView, leaveBoard } from './board.js';
 import { testsView, leaveTests } from './testsview.js';
+import { artifactsView, leaveArtifacts, artifactsTick } from './artifactsview.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const IMG = /\.(png|jpe?g|gif|webp|svg)$/i;
@@ -131,7 +132,7 @@ let current = null;   // { el, ws, view, dirty, ... } of the view on screen
 // frequent state pushes never reload an iframe or throw away an edit in progress.
 export function showProject(el, { ws, view, call, toast, ask, setView }) {
   const key = `${ws.id}:${view}`;
-  if (current && current.key === key && el.dataset.key === key) { current.ws = ws; return; }
+  if (current && current.key === key && el.dataset.key === key) { current.ws = ws; if (view === 'artifacts') artifactsTick(ws); return; }
   if (current?.dirty && current.ws.id !== ws.id && !confirm('This document has unsaved changes. Discard them?')) {
     call('setActive', { id: current.ws.id });   // stay on the workstream the unsaved document belongs to
     return;
@@ -140,7 +141,7 @@ export function showProject(el, { ws, view, call, toast, ask, setView }) {
   el.dataset.key = key;
   paint();
 }
-export function hideProject() { leaveBoard(); leaveTests(); if (current) { current.el.dataset.key = ''; current = null; } }
+export function hideProject() { leaveBoard(); leaveTests(); leaveArtifacts(); if (current) { current.el.dataset.key = ''; current = null; } }
 
 // From a card: open one of its documents in the Docs view.
 export function openDoc(c, rel) {
@@ -156,11 +157,12 @@ function paint() {
   if (!c) return;
   c.dirty = false;
   const m = memOf(c.ws.id);
-  leaveBoard(); leaveTests();
+  leaveBoard(); leaveTests(); leaveArtifacts();
   // Views share one container; drop the handlers the board and tests views set on it.
   for (const k of ['onclick', 'ondragstart', 'ondragend', 'ondragover', 'ondrop', 'onkeydown']) c.el[k] = null;
   if (c.view === 'board') return boardView(c);
   if (c.view === 'tests') return testsView(c);
+  if (c.view === 'artifacts') return artifactsView(c);
   if (c.view === 'docs') return m.docFile ? openFile(m.docFile, 'docs') : docsHome(m.docDir);
   return m.archFile ? (/\.(md|markdown)$/i.test(m.archFile) ? openFile(m.archFile, 'architecture') : archViewer(m.archFile)) : archHome();
 }

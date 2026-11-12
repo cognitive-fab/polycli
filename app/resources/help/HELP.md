@@ -89,6 +89,21 @@ Above the tabs, **Main**, **Architecture** and **Docs** switch what the workstre
 - **Architecture** shows the archlens diagrams found in `docs/architecture/` (or `architecture/`) of the workstream folder as tiles. Click one to open it in the viewer; ‹ › move between diagrams. The architecture document (README.md) is the last tile.
 - **Docs** shows `docs/` as tiles: folders drill down, the path above the tiles takes you back up. Click a Markdown file to preview it; **Edit** shows the source beside a live preview, **Save** (Ctrl+S) writes it. If the file changed on disk meanwhile, polycli asks before overwriting. HTML files and images open in the viewer; **+ New document** creates a Markdown file in the current folder.
 
+## Artifacts
+
+**Artifacts** (above the tabs) lists, newest first, what the workstream produced:
+
+- **claude.ai artifacts** a Claude session published (Claude Code's Artifact tool), with the session's name;
+- **documents** a session wrote or edited (Markdown, HTML, PDF, Word, Excel, PowerPoint, CSV, text), anywhere it worked, worktrees included;
+- what a linked **Cowork** task reported with `polycli_add_artifact` (◇ and the task's name).
+
+New ones appear as the sessions and tasks report them; **↻** also reads the sessions' transcripts again, so what a session made before polycli watched it is listed too. **All / Sessions / Cowork** and the filter box narrow the list.
+
+Click one to open it beside the list:
+
+- **Web pages** (claude.ai artifacts, links from Cowork) open inside polycli. The viewer has its own login: sign in to claude.ai there once, and it stays signed in. Links a page opens stay in the viewer (**‹** goes back); **Open in browser** opens the page you're on in your browser. Only https pages load, and a page can't use the camera, the microphone or your location.
+- **Local files**: HTML pages (with the images and scripts beside them) and images show in the viewer, Markdown as a preview. A published page that also has its file on this PC offers **Local copy** / **Online**. Other files (Word, PDF…) are shown in Explorer with **Show in folder**; polycli never runs them.
+
 ## Board
 
 **Board** (next to Main) is a Kanban board for the workstream: Ready, Doing, Done. Describe a task in the Ready box and press **Add & discuss** (Ctrl+Enter): a card opens with a chat where Claude talks the task through with you, then can write a functional spec, a tech spec or a literature search. Drag cards between columns, or use ‹ ›.

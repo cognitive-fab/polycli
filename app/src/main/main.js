@@ -1,6 +1,7 @@
 'use strict';
 const path = require('path');
-const { app, BrowserWindow, ipcMain, dialog, Notification, Menu, clipboard, shell, protocol, powerMonitor } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Notification, Menu, clipboard, shell, protocol, powerMonitor, session } = require('electron');
+const { Artifacts, installArtifactProtocol } = require('./artifacts');
 const { paths, ensureDirs } = require('./paths');
 const { installHelpers, HookServer } = require('./hooks');
 const { PtyClient } = require('./ptyclient');
@@ -15,7 +16,15 @@ const { Tests } = require('./tests');
 const store = require('./store');
 
 // Diagrams and images from a workstream's architecture/ and docs/ folders (projectfiles.js).
-protocol.registerSchemesAsPrivileged([{ scheme: 'polycli-view', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
+// polycli-art://: files of the Artifacts view (artifacts.js).
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'polycli-view', privileges: { standard: true, secure: true, supportFetchAPI: true } },
+  { scheme: 'polycli-art', privileges: { standard: true, secure: true, supportFetchAPI: true } },
+]);
+// Pages opened from the Artifacts view (claude.ai artifacts, links Cowork reported) show
+// in a <webview> with its own session, so a claude.ai login there persists and stays
+// apart from polycli's window.
+const WEB_PARTITION = 'persist:polycli-web';
 
 app.setAppUserModelId('polycli');
 if (process.env.POLYCLI_HOME) app.setPath('userData', path.join(process.env.POLYCLI_HOME, 'electron'));
@@ -27,6 +36,7 @@ let cowork = null;
 let billing = null;
 let board = null;
 let tests = null;
+let artifacts = null;
 
 function createWindow() {
   win = new BrowserWindow({
@@ -34,7 +44,23 @@ function createWindow() {
     backgroundColor: '#14161c', title: 'polycli', autoHideMenuBar: true,
     icon: path.join(__dirname, '..', '..', 'resources', 'icon', 'polycli.ico'),
     show: !process.env.POLYCLI_SMOKE_HIDDEN,
-    webPreferences: { preload: path.join(__dirname, '..', 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
+    webPreferences: { preload: path.join(__dirname, '..', 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true, webviewTag: true },
+  });
+  // The only <webview> polycli makes is the Artifacts viewer: https pages in WEB_PARTITION,
+  // with no preload and no Node, sandboxed. Anything else is refused.
+  win.webContents.on('will-attach-webview', (e, prefs, params) => {
+    delete prefs.preload;
+    Object.assign(prefs, { nodeIntegration: false, nodeIntegrationInSubFrames: false, contextIsolation: true, sandbox: true, webSecurity: true, allowRunningInsecureContent: false, partition: WEB_PARTITION });
+    if (params.partition !== WEB_PARTITION || !/^https:\/\//i.test(params.src || '')) e.preventDefault();
+  });
+  win.webContents.on('did-attach-webview', (_e, guest) => {
+    // Links that open a new window load in the same viewer; only https pages.
+    guest.setWindowOpenHandler(({ url }) => {
+      if (/^https:\/\//i.test(url)) guest.loadURL(url);
+      return { action: 'deny' };
+    });
+    guest.on('will-navigate', (e, url) => { if (!/^https:\/\//i.test(url)) e.preventDefault(); });
+    guest.on('will-redirect', (e, url) => { if (!/^https:\/\//i.test(url)) e.preventDefault(); });
   });
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
   // A link in a diagram (a source line on GitHub) opens in the browser; nothing opens in-app.
@@ -53,6 +79,13 @@ function send(channel, ...args) {
 function snapshot() {
   const snap = manager.snapshot();
   if (billing) snap.workstreams = snap.workstreams.map(w => ({ ...w, billable: billing.isBillable(w.id) }));
+  // Changes when a Cowork task or a session reports an artifact: the Artifacts view
+  // reloads its list then.
+  const arts = cowork ? cowork.c.artifacts : [];
+  snap.workstreams = snap.workstreams.map(w => {
+    const found = [...arts.filter(a => a.workstreamId === w.id), ...snap.sessions.filter(s => s.workstreamId === w.id).flatMap(s => [...(s.links || []), ...(s.documents || [])])];
+    return { ...w, artifactsRev: `${found.length}:${Math.max(0, ...found.map(x => x.at || 0))}` };
+  });
   return { ...snap, cowork: cowork ? cowork.snapshot() : null, billing: billing ? billing.summary() : null, noRemoteGlobal: require('./sessions').globalNoRemote() };
 }
 
@@ -152,6 +185,23 @@ const OPS = {
   testsStop: a => tests.stop(a.workstreamId),
   setBillable: a => billing.setBillable(manager.ws(a.workstreamId), !!a.on),
   billingHistory: () => billing.history(),
+  artifactList: a => artifacts.list(a.workstreamId, { rescan: !!a.rescan }),
+  // A listed Markdown file, for the viewer's preview.
+  artifactRead: async a => {
+    const it = await artifacts.item(a.workstreamId, String(a.id));
+    if (!it.markdown || !it.exists) throw new Error('Only a Markdown artifact that still exists can be read here');
+    const st = require('fs').statSync(it.path);
+    if (st.size > 2 << 20) throw new Error('This file is larger than 2 MB; open it in its folder.');
+    return { text: require('fs').readFileSync(it.path, 'utf8') };
+  },
+  // Outside polycli: https links in the browser; files only shown in Explorer (never
+  // opened, which could run them).
+  artifactOpen: async a => {
+    const it = await artifacts.item(a.workstreamId, String(a.id));
+    if (a.how === 'browser' && it.url && /^https:\/\//i.test(it.url)) return shell.openExternal(it.url);
+    if (a.how === 'folder' && it.path && it.exists) return shell.showItemInFolder(it.path);
+    throw new Error('nothing to open');
+  },
   archList: a => files.listArchitecture(manager.ws(a.workstreamId).folder),
   docList: a => files.listDir(manager.ws(a.workstreamId).folder, a.rel),
   docRead: a => files.readFile(manager.ws(a.workstreamId).folder, a.rel),
@@ -259,6 +309,14 @@ app.whenReady().then(() => {
   pty.on('data', (term, data) => send('pty:data', term, data));
   manager.on('changed', pushState);
   cowork = new Cowork(manager);
+  artifacts = new Artifacts(manager, cowork);
+  installArtifactProtocol(protocol, artifacts);
+  // The artifact viewer's pages may copy to the clipboard and go full screen; any other
+  // permission (camera, location, notifications…) is refused.
+  const web = session.fromPartition(WEB_PARTITION);
+  const allowed = new Set(['clipboard-sanitized-write', 'fullscreen']);
+  web.setPermissionRequestHandler((_wc, perm, done) => done(allowed.has(perm)));
+  web.setPermissionCheckHandler((_wc, perm) => allowed.has(perm));
   board = new Board(manager);
   board.on('event', ev => send('board:event', ev));
   tests = new Tests(manager);
