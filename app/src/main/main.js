@@ -226,9 +226,10 @@ async function checkRequirements() {
     if (await onPath(r.exe)) {
       if (!r.minMajor) continue;
       const major = await majorVersion(r.exe);
-      if (major === null || major >= r.minMajor) continue;
-      title = `Node.js ${major} is too old`;
-      detail = detail.replace('which is not on PATH', `and they need Node.js ${r.minMajor} or newer`);
+      if (major !== null && major >= r.minMajor) continue;
+      // A node that doesn't answer `node --version` won't run the helpers either.
+      title = major === null ? 'Node.js does not run' : `Node.js ${major} is too old`;
+      detail = detail.replace('which is not on PATH', major === null ? `but "node --version" failed; they need a working Node.js ${r.minMajor} or newer` : `and they need Node.js ${r.minMajor} or newer`);
     }
     const { response } = await dialog.showMessageBox(win, { type: 'warning', title: 'polycli', message: title, detail, buttons: ['Open the download page', 'OK'], defaultId: 1, cancelId: 1, noLink: true });
     if (response === 0) shell.openExternal(r.url);

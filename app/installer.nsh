@@ -31,9 +31,11 @@
     !insertmacro _POLYCLI_STOP 0
   ${endIf}
   ; polycli's processes can take a minute to go away after it closes (seen: 50 to 65 s),
-  ; and until then their files can't be replaced. Its own processes: up to 150 s, then
-  ; ask. Processes without a path can't be ended from here: up to 60 s, then go on (the
-  ; file copy reports a file that is still in use).
+  ; and until then their files can't be replaced. Each check below is a 1 s pause plus a
+  ; PowerShell query (about 1 s more), so the counts are checks, not seconds. Its own
+  ; processes: 150 checks (about 3 to 5 minutes), then ask. Processes without a path
+  ; can't be ended from here: 60 checks (about 1 to 2 minutes), then go on (the file copy
+  ; reports a file that is still in use).
   StrCpy $R1 0
   polycli_wait:
   ${if} $R0 != 1
