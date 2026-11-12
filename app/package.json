@@ -1,8 +1,11 @@
 {
   "name": "polycli",
+  "productName": "polycli",
   "version": "0.3.0",
   "private": true,
   "description": "A Windows terminal for Claude Code workstreams",
+  "author": "cognitive-fab",
+  "homepage": "https://github.com/cognitive-fab/polycli",
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
@@ -10,14 +13,56 @@
     "test:unit": "node --test src/main/__tests__/tests.test.js",
     "smoke": "node scripts/smoke.js",
     "persist": "node scripts/persist.js",
-    "bridge:pack": "npx -y @anthropic-ai/mcpb pack ../bridge ../out/polycli-bridge.mcpb"
+    "bridge:pack": "npx -y @anthropic-ai/mcpb pack ../bridge ../out/polycli-bridge.mcpb",
+    "icon": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/icon.ps1",
+    "dist": "npm run bridge:pack && electron-builder --win --x64 && node scripts/dist-check.js",
+    "dist:check": "node scripts/dist-check.js"
   },
   "devDependencies": {
-    "electron": "^45.2.3"
+    "electron": "^45.2.3",
+    "electron-builder": "26.18.0"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "node-pty": "1.2.0-beta.18"
+  },
+  "build": {
+    "appId": "polycli",
+    "productName": "polycli",
+    "copyright": "Copyright © 2026 cognitive-fab",
+    "directories": { "output": "dist", "buildResources": "resources/icon" },
+    "asar": false,
+    "npmRebuild": false,
+    "files": [
+      "package.json",
+      "src/**/*",
+      "!src/main/__tests__/**",
+      "resources/**/*",
+      "!**/*.pdb",
+      "!node_modules/node-pty/{src,third_party,scripts,typings,deps}/**",
+      "!node_modules/node-pty/prebuilds/{darwin-arm64,darwin-x64,linux-arm64,linux-x64,win32-arm64}/**",
+      "!node_modules/node-addon-api/**"
+    ],
+    "extraResources": [{ "from": "../out/polycli-bridge.mcpb", "to": "polycli-bridge.mcpb" }],
+    "win": {
+      "icon": "resources/icon/polycli.ico",
+      "artifactName": "polycli-${version}-win-${arch}.${ext}",
+      "target": [{ "target": "nsis", "arch": ["x64"] }, { "target": "zip", "arch": ["x64"] }]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "polycli",
+      "installerIcon": "resources/icon/polycli.ico",
+      "uninstallerIcon": "resources/icon/polycli.ico",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "include": "installer.nsh",
+      "artifactName": "polycli-Setup-${version}.exe"
+    }
   }
 }

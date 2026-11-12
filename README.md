@@ -12,6 +12,8 @@ What it does, in short:
 
 What changed in each version: [`CHANGELOG.md`](CHANGELOG.md).
 
+**Install.** Run `polycli-Setup-‹version›.exe` (built with `npm run dist` in `app/`, see [`app/README.md`](app/README.md#build-the-installer)). It installs for your user only, without administrator rights, and adds Start menu and desktop shortcuts; running a newer installer updates polycli in place, and uninstalling keeps your workstreams. The installer isn't signed yet, so SmartScreen may warn: **More info** → **Run anyway**. polycli needs Claude Code (`claude`) and Node.js 18 or newer (`node`) on PATH, and tells you at startup if one is missing.
+
 - [Help](app/resources/help/HELP.md) explains how to use it, with screenshots (also under **? Help** in the app).
 - [`DESIGN.md`](DESIGN.md) is the design (source of truth).
 - [`app/`](app/) is the Electron app (Phase 1). See [`app/README.md`](app/README.md) to run it.

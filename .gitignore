@@ -7,3 +7,4 @@ node_modules/
 out/
 # Claude Code worktrees (one per change, made and removed by Claude Code)
 .claude/worktrees/
+dist/

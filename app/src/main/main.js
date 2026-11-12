@@ -32,6 +32,7 @@ function createWindow() {
   win = new BrowserWindow({
     width: 1400, height: 900, minWidth: 800, minHeight: 500,
     backgroundColor: '#14161c', title: 'polycli', autoHideMenuBar: true,
+    icon: path.join(__dirname, '..', '..', 'resources', 'icon', 'polycli.ico'),
     show: !process.env.POLYCLI_SMOKE_HIDDEN,
     webPreferences: { preload: path.join(__dirname, '..', 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
@@ -202,6 +203,24 @@ function loginItem(on) {
   return { on: app.getLoginItemSettings(opts).openAtLogin, packaged: app.isPackaged };
 }
 
+// polycli needs claude, and node for the hook helpers (hooks.js): without node a
+// session runs but never reports that it is busy, done or waiting on you. An installed
+// polycli can't assume either, so it says once at startup what is missing.
+const REQUIREMENTS = [
+  { exe: 'claude', title: 'Claude Code was not found', detail: 'polycli runs Claude Code sessions with the claude command, which is not on PATH. Install Claude Code (https://claude.com/claude-code), then start polycli again.', url: 'https://claude.com/claude-code' },
+  { exe: 'node', title: 'Node.js was not found', detail: 'polycli learns what a session is doing (working, done, waiting on you) from small helpers that run with node, which is not on PATH. Without it, sessions run but their state and the ✋ marker are not shown. Install Node.js 18 or newer (winget install OpenJS.NodeJS.LTS, or https://nodejs.org), then start polycli again.', url: 'https://nodejs.org' },
+];
+function onPath(exe) {
+  return new Promise(resolve => require('child_process').execFile('where.exe', [exe], { windowsHide: true, timeout: 10000, env: require('./env').cleanEnv() }, err => resolve(!err)));
+}
+async function checkRequirements() {
+  for (const r of REQUIREMENTS) {
+    if (await onPath(r.exe)) continue;
+    const { response } = await dialog.showMessageBox(win, { type: 'warning', title: 'polycli', message: r.title, detail: r.detail, buttons: ['Open the download page', 'OK'], defaultId: 1, cancelId: 1, noLink: true });
+    if (response === 0) shell.openExternal(r.url);
+  }
+}
+
 function wireIpc() {
   ipcMain.handle('polycli', async (_e, op, args) => {
     const fn = OPS[op];
@@ -269,6 +288,7 @@ app.whenReady().then(() => {
     manager.startPolling();
     pushState();
     if (process.env.POLYCLI_SMOKE) require('./smoke').run({ app, win, manager, cowork }).catch(e => { console.error(e); app.exit(1); });
+    else checkRequirements().catch(() => {});
   });
 
   win.on('focus', () => win.flashFrame(false));

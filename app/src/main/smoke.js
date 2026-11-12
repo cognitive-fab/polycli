@@ -7,7 +7,8 @@ const path = require('path');
 const claude = require('./claude');
 const vscode = require('./vscode');
 
-const OUT = path.join(__dirname, '..', '..', 'out');
+// A packaged polycli can't write next to its own files: scripts/dist-check.js points this elsewhere.
+const OUT = process.env.POLYCLI_SMOKE_OUT || path.join(__dirname, '..', '..', 'out');
 const FOLDER = process.env.POLYCLI_SMOKE_FOLDER;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -629,8 +630,46 @@ async function runBridge({ app, win, manager, cowork }) {
   app.exit(report.ok ? 0 : 1);
 }
 
+// The installed build (scripts/dist-check.js): the parts a package can lose without
+// `npm start` noticing. No Claude session, so it costs nothing and runs anywhere.
+async function runPackaged({ app, win, manager }) {
+  const report = { phase: 'packaged', packaged: app.isPackaged, version: app.getVersion() };
+  const wc = win.webContents;
+  let shellId = null;
+  try {
+    const { paths } = require('./paths');
+    report.helpers = ['hook.mjs', 'post.mjs', 'status.mjs'].every(f => fs.existsSync(path.join(paths.bin, f)));
+    const res = path.join(__dirname, '..', '..', 'resources');
+    report.help = fs.readFileSync(path.join(res, 'help', 'HELP.md'), 'utf8').length > 1000 && fs.existsSync(path.join(res, 'help', 'overview.png'));
+    report.windowIcon = fs.existsSync(path.join(res, 'icon', 'polycli.ico'));
+    report.bridgeExtension = fs.existsSync(path.join(process.resourcesPath, 'polycli-bridge.mcpb'));
+    report.renderer = await wc.executeJavaScript(`!!document.querySelector('.brand') && getComputedStyle(document.body).backgroundColor !== 'rgba(0, 0, 0, 0)'`);
+    const ws = manager.createWorkstream({ name: 'packaged-test', folder: FOLDER });
+    const h = manager.newShell({ workstreamId: ws.id });
+    shellId = h.id;
+    await waitFor(() => manager.pty.isLive(`h:${h.id}`), 15000, 'shell pty');
+    await sleep(2500);
+    manager.write(`h:${h.id}`, 'echo ("packaged-" + "shell-ok")\r');
+    await waitFor(() => manager.pty.scrollback(`h:${h.id}`).includes('packaged-shell-ok'), 20000, 'shell echo');
+    report.shell = true;
+    for (let i = 0; i < 40 && !report.terminalView; i++) {
+      report.terminalView = await wc.executeJavaScript(`!!document.querySelector('[data-term="h:${h.id}"] .xterm-screen')`);
+      if (!report.terminalView) await sleep(250);
+    }
+    report.ok = !!(report.packaged && report.helpers && report.help && report.windowIcon && report.bridgeExtension && report.renderer && report.terminalView);
+  } catch (e) {
+    report.ok = false;
+    report.error = String(e.stack || e);
+  }
+  if (shellId) { try { await manager.closeShell(shellId); } catch {} }
+  fs.writeFileSync(path.join(OUT, 'packaged.json'), JSON.stringify(report, null, 2));
+  console.log('SMOKE packaged', JSON.stringify(report));
+  app.exit(report.ok ? 0 : 1);
+}
+
 async function run(ctx) {
   fs.mkdirSync(OUT, { recursive: true });
+  if (process.env.POLYCLI_SMOKE === 'packaged') return runPackaged(ctx);
   if (process.env.POLYCLI_SMOKE === 'bridge') return runBridge(ctx);
   if (process.env.POLYCLI_SMOKE === 'help') return runHelp(ctx);
   if (process.env.POLYCLI_SMOKE === 'git') return runGit(ctx);

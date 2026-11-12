@@ -12,6 +12,27 @@ npm start
 
 This needs Windows, Node 18 or newer on PATH (the hook helpers run with `node`), and `claude` on PATH.
 
+## Build the installer
+
+```
+cd app
+npm run dist
+```
+
+This writes to `dist/`:
+
+- `polycli-Setup-‹version›.exe`: the installer (per user, no administrator rights, Start menu and desktop shortcuts, closes the installed polycli before updating it, keeps `%APPDATA%\polycli` on uninstall);
+- `polycli-‹version›-win-x64.zip`: the same app to unzip and run, without installing;
+- `win-unpacked/`: the app as installed.
+
+`npm run dist` packs the Cowork bridge extension into the app first (`npm run bridge:pack`), and ends with `npm run dist:check`. That check confirms the files are there, `polycli.exe` and the installer carry the polycli icon and version, and the packaged app starts and works (window, hook helpers, help, bridge extension, a PowerShell shell through node-pty) in an isolated home that leaves a running polycli alone. `node scripts/dist-check.js --exe "<installed polycli.exe>"` runs the last part against an installed copy, and `POLYCLI_SMOKE_EXE="<polycli.exe>" npm run smoke` runs the full smoke test (Claude sessions, hooks, restart) against it.
+
+- **No native rebuild.** node-pty ships prebuilt binaries that work with any Electron, so nothing is compiled and no Visual Studio is needed.
+- **No asar archive.** The app's files stay plain under `resources/app`, so the hook helpers, the help and node-pty's helper files are read the same way as in a dev run.
+- **Icon.** `resources/icon/polycli.ico` (16 to 256 px) and `icon.png` (1024 px) are drawn by `npm run icon` (`scripts/icon.ps1`); edit the script and run it to change them.
+- **Not signed yet.** Without a code-signing certificate, SmartScreen warns on first run ("More info" → "Run anyway"). Signing needs only a certificate (for example Azure Trusted Signing) configured for electron-builder; the build doesn't change.
+- **Installer behavior** beyond electron-builder's defaults is in `installer.nsh`: it closes only the polycli that runs from the install folder, and waits for its processes to end (polycli can take about a minute to exit completely).
+
 ## What it does
 
 - **Workstreams.** A name, a color and a main folder. They are listed in the left rail.
@@ -38,8 +59,8 @@ This needs Windows, Node 18 or newer on PATH (the hook helpers run with `node`),
 - **Time and tokens.** Weekly Claude time and output tokens per workstream (from the transcripts, reset Monday 07:00), and your own time on billable workstreams with monthly history.
 - **Survives polycli exiting.** Claude sessions are background sessions. When polycli starts, it reattaches every session that was open.
 - **Needs-you inbox.** Claude's `Notification` hook (`notification_type: permission_prompt` and similar) marks a session "Needs you" and counts it in the top bar. If polycli isn't in focus, its taskbar button flashes.
-  - Windows toasts need the app to be installed with a Start menu shortcut.
-  - In a dev run (`npm start`), Windows refuses them: "Settings prevent the notification type from being delivered".
+  - Windows toasts need the installed app (its Start menu shortcut carries the `polycli` AppUserModelId).
+  - "Settings prevent the notification type from being delivered" means notifications are off in Windows Settings → System → Notifications.
 - **Folder trust.** If Claude Code hasn't trusted the folder yet, the tab runs plain `claude`, so you answer its trust prompt yourself. After `/exit`, polycli starts the session.
 
 polycli writes only to `%APPDATA%\polycli`: state (workstream variable values encrypted), hook helpers, and per-session settings files (which carry the workstream's variables in plain text, because Claude reads them from there). Your `~/.claude/settings.json` is never changed. Each session gets its hooks and statusLine from its own `--settings` file.

@@ -160,9 +160,17 @@ The **Cowork** panel of a workstream lists the linked tasks (with **Revoke**), t
 
 The bridge also works the other way. Ask a Claude session to send something to the linked Cowork or Claude Design task (a brief, a request, a result): it runs `node "$POLYCLI_POST" "<message>"`, and the task reads it with the `polycli_inbox` tool. Each linked task reads each message once; messages wait up to 7 days, so a task linked later still finds them. The workstream's **Cowork** dialog lists them as waiting or read. Sessions started before this version need a Restart to get the command, and the extension must be updated (**Install or update the extension…** in the Cowork dialog) for the task to get `polycli_inbox`.
 
+## Install and update
+
+Run **polycli-Setup-‹version›.exe**. It installs for you only (no administrator rights), in `%LOCALAPPDATA%\Programs\polycli` unless you pick another folder, and adds polycli to the Start menu and the desktop. To update, run the newer installer: it closes polycli first (your Claude sessions keep running and are reattached when polycli starts again; shells start again). Uninstall from **Settings → Apps**; your workstreams and settings in `%APPDATA%\polycli` are kept.
+
+The installer isn't signed yet, so Windows SmartScreen may say "Windows protected your PC": click **More info**, then **Run anyway**. The zip (**polycli-‹version›-win-x64.zip**) is the same app without installing: unzip it anywhere and run `polycli.exe`.
+
+polycli needs **Claude Code** (`claude`) and **Node.js 18 or newer** (`node`) on PATH; it says at startup if one is missing.
+
 ## Start with Windows
 
-**⚙** in the top bar → **Start polycli when I sign in to Windows**. The Claude sessions that were open are reattached when polycli starts; after a restart of Windows they start again with their conversation.
+**⚙** in the top bar → **Start polycli when I sign in to Windows**. The Claude sessions that were open are reattached when polycli starts; after a restart of Windows they start again with their conversation. If you turned this on while running polycli from source, turn it off and on again in the installed polycli so Windows starts the installed one.
 
 ## Themes
 
@@ -174,4 +182,4 @@ The top-bar button cycles **System**, **Light** and **Dark**. System follows Win
 
 - **"Trust needed"**: Claude Code hasn't trusted the folder yet. Answer its prompt in the tab, then type `/exit`; polycli starts the session.
 - **"Detached"**: the tab lost its connection while the session kept running. polycli reconnects by itself; **Reattach** does it now.
-- **No pop-up notifications**: Windows only shows them for an installed app. In a development run (`npm start`) the taskbar button flashes instead.
+- **No pop-up notifications**: Windows only shows them for an installed app (from the Start menu shortcut), and only when notifications are on in **Windows Settings → System → Notifications**. Otherwise the taskbar button flashes instead.
