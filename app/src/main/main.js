@@ -208,15 +208,29 @@ function loginItem(on) {
 // polycli can't assume either, so it says once at startup what is missing.
 const REQUIREMENTS = [
   { exe: 'claude', title: 'Claude Code was not found', detail: 'polycli runs Claude Code sessions with the claude command, which is not on PATH. Install Claude Code (https://claude.com/claude-code), then start polycli again.', url: 'https://claude.com/claude-code' },
-  { exe: 'node', title: 'Node.js was not found', detail: 'polycli learns what a session is doing (working, done, waiting on you) from small helpers that run with node, which is not on PATH. Without it, sessions run but their state and the ✋ marker are not shown. Install Node.js 18 or newer (winget install OpenJS.NodeJS.LTS, or https://nodejs.org), then start polycli again.', url: 'https://nodejs.org' },
+  { exe: 'node', minMajor: 18, title: 'Node.js was not found', detail: 'polycli learns what a session is doing (working, done, waiting on you) from small helpers that run with node, which is not on PATH. Without it, sessions run but their state and the ✋ marker are not shown. Install Node.js 18 or newer (winget install OpenJS.NodeJS.LTS, or https://nodejs.org), then start polycli again.', url: 'https://nodejs.org' },
 ];
 function onPath(exe) {
   return new Promise(resolve => require('child_process').execFile('where.exe', [exe], { windowsHide: true, timeout: 10000, env: require('./env').cleanEnv() }, err => resolve(!err)));
 }
+// Major version of a tool that prints "v20.11.0" for --version (node), or null.
+function majorVersion(exe) {
+  return new Promise(resolve => require('child_process').execFile(exe, ['--version'], { windowsHide: true, timeout: 10000, env: require('./env').cleanEnv() }, (err, out) => {
+    const m = !err && /^v?(\d+)\./.exec(String(out).trim());
+    resolve(m ? Number(m[1]) : null);
+  }));
+}
 async function checkRequirements() {
   for (const r of REQUIREMENTS) {
-    if (await onPath(r.exe)) continue;
-    const { response } = await dialog.showMessageBox(win, { type: 'warning', title: 'polycli', message: r.title, detail: r.detail, buttons: ['Open the download page', 'OK'], defaultId: 1, cancelId: 1, noLink: true });
+    let { title, detail } = r;
+    if (await onPath(r.exe)) {
+      if (!r.minMajor) continue;
+      const major = await majorVersion(r.exe);
+      if (major === null || major >= r.minMajor) continue;
+      title = `Node.js ${major} is too old`;
+      detail = detail.replace('which is not on PATH', `and they need Node.js ${r.minMajor} or newer`);
+    }
+    const { response } = await dialog.showMessageBox(win, { type: 'warning', title: 'polycli', message: title, detail, buttons: ['Open the download page', 'OK'], defaultId: 1, cancelId: 1, noLink: true });
     if (response === 0) shell.openExternal(r.url);
   }
 }

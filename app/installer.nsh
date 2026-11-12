@@ -6,10 +6,12 @@
 ; and a polycli.exe Windows can't end blocks the install for good.
 ; Claude sessions are background sessions, so they keep running while polycli is closed.
 
-; A process that is ending has no path any more but still holds its files, so a
-; polycli.exe without a path counts as running too (it goes away by itself).
+; Result 0: a polycli from the install folder runs. 2: only polycli.exe processes whose
+; path Windows doesn't give: processes that are ending (they still hold their files for
+; a while), or another user's or an elevated polycli. 1: none. Anything else (PowerShell
+; failed): treated as none.
 !macro _POLYCLI_RUNNING _RESULT
-  nsExec::Exec `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "if (Get-CimInstance Win32_Process | ? { if ($$_.ExecutablePath) { $$_.ExecutablePath.StartsWith('$INSTDIR\', 'OrdinalIgnoreCase') } else { $$_.Name -eq '${APP_EXECUTABLE_FILENAME}' } }) { exit 0 } else { exit 1 }"`
+  nsExec::Exec `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$all = @(Get-CimInstance Win32_Process | ? { $$_.Name -eq '${APP_EXECUTABLE_FILENAME}' }); if ($$all | ? { $$_.ExecutablePath -and $$_.ExecutablePath.StartsWith('$INSTDIR\', 'OrdinalIgnoreCase') }) { exit 0 } elseif ($$all | ? { -not $$_.ExecutablePath }) { exit 2 } else { exit 1 }"`
   Pop ${_RESULT}
 !macroend
 
@@ -27,27 +29,35 @@
     polycli_stop:
     DetailPrint "$(appClosing)"
     !insertmacro _POLYCLI_STOP 0
-    StrCpy $R1 0
-    ; polycli's processes can take a minute to go away after it closes (seen: 50 to
-    ; 65 s), and until then their files can't be replaced: wait up to 150 s before asking.
-    polycli_wait:
-      Sleep 1000
-      !insertmacro _POLYCLI_RUNNING $R0
-      ${if} $R0 == 0
-        IntOp $R1 $R1 + 1
-        ${if} $R1 == 15
-          !insertmacro _POLYCLI_STOP 1
-          DetailPrint `Waiting for "${PRODUCT_NAME}" to close.`
-        ${endIf}
-        ${if} $R1 < 150
-          Goto polycli_wait
-        ${endIf}
-        MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(appCannotBeClosed)" /SD IDCANCEL IDRETRY polycli_retry
-        Quit
-        polycli_retry:
+  ${endIf}
+  ; polycli's processes can take a minute to go away after it closes (seen: 50 to 65 s),
+  ; and until then their files can't be replaced. Its own processes: up to 150 s, then
+  ; ask. Processes without a path can't be ended from here: up to 60 s, then go on (the
+  ; file copy reports a file that is still in use).
+  StrCpy $R1 0
+  polycli_wait:
+  ${if} $R0 != 1
+    Sleep 1000
+    IntOp $R1 $R1 + 1
+    !insertmacro _POLYCLI_RUNNING $R0
+    ${if} $R0 == 0
+      ${if} $R1 == 15
         !insertmacro _POLYCLI_STOP 1
-        StrCpy $R1 120
+        DetailPrint `Waiting for "${PRODUCT_NAME}" to close.`
+      ${endIf}
+      ${if} $R1 < 150
         Goto polycli_wait
       ${endIf}
+      MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(appCannotBeClosed)" /SD IDCANCEL IDRETRY polycli_retry
+      Quit
+      polycli_retry:
+      !insertmacro _POLYCLI_STOP 1
+      StrCpy $R1 120
+      Goto polycli_wait
+    ${elseif} $R0 == 2
+      ${if} $R1 < 60
+        Goto polycli_wait
+      ${endIf}
+    ${endIf}
   ${endIf}
 !macroend

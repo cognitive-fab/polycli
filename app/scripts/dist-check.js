@@ -63,14 +63,20 @@ function runPackaged(exe) {
     child.stdout.on('data', d => { log += d; });
     child.stderr.on('data', d => { log += d; });
     const timer = setTimeout(() => child.kill(), 90000);
-    child.on('exit', code => {
+    let done = false;
+    // A path that can't be started (wrong --exe) emits 'error' and no 'exit'.
+    child.on('error', e => { log += `could not start ${exe}: ${e.message}\n`; finish(null); });
+    child.on('exit', code => finish(code));
+    function finish(code) {
+      if (done) return;
+      done = true;
       clearTimeout(timer);
       let report = null;
       try { report = JSON.parse(fs.readFileSync(path.join(home, 'packaged.json'), 'utf8')); } catch {}
       if (!report) console.log(log.split(/\r?\n/).filter(l => l && !/gpu|dxgi|angle/i.test(l)).slice(-20).join('\n'));
       try { fs.rmSync(home, { recursive: true, force: true }); } catch {}
       resolve({ code, report });
-    });
+    }
   });
 }
 
