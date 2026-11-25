@@ -1,6 +1,10 @@
 # Changelog
 
 ## Unreleased
+- **Plugins and skills per workstream**: ⚙ Settings → Plugins and skills switches plugins on or off for a workstream (with the tokens each adds to every request) and sets each of your own and the project's skills to on, name only, only when typed, or off; copy one of your skills into the project.
+- **MCP servers and permission profiles per workstream**: ⚙ Settings → MCP and permissions switches MCP servers off, picks a permission profile (Standard, No publishing, Careful, Live systems; editable in ⚙ → Edit profiles…) and adds the workstream's own deny, ask and allow rules and permission mode. The project's saved "always allow" rules are listed, and those holding a password or key, or allowing a whole tool, can be removed.
+- Workstream settings are now in tabs (General, Environment, Plugins and skills, MCP and permissions). A changed setting shows a notice above each session, with **Restart all**; a session Claude is working in restarts when it is done.
+- Artifacts: a Markdown artifact's images next to it now load; a transcript line still being written is no longer skipped for good; overlapping list loads can't show an older list.
 - **Artifacts view**: per workstream, the claude.ai artifacts its sessions published, the documents they wrote and what its Cowork tasks reported, in one list that updates as they report. Click one to open it inside polycli: web pages in a built-in viewer (sign in to claude.ai there once), local HTML, images and Markdown beside the list.
 - **Windows installer**: `npm run dist` builds `polycli-Setup-‹version›.exe` (for you only by default, no administrator rights; Start menu and desktop shortcuts, updates in place, keeps your data on uninstall) and a zip to run without installing. A check after each build confirms the icon, the version and that the packaged app runs (window, hooks, help, bridge extension, a shell).
 - **polycli has its own icon** (window, taskbar, installer, shortcuts).

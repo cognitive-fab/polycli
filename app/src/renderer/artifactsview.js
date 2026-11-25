@@ -66,9 +66,11 @@ export function artifactsTick(ws) {
 }
 
 async function load(me, rescan) {
+  // Loads can overlap (opening, ↻, a report arriving): only the latest one paints.
+  const seq = me.seq = (me.seq || 0) + 1;
   let r;
   try { r = await me.call('artifactList', { workstreamId: me.ws.id, rescan }); } catch { return; }
-  if (ctx !== me) return;
+  if (ctx !== me || seq !== me.seq) return;
   me.items = r.items;
   drawList(me);
   const m = memOf(me.ws.id);
@@ -130,7 +132,13 @@ async function show(me) {
     try {
       const { text } = await me.call('artifactRead', { workstreamId: me.ws.id, id: it.id });
       if (ctx !== me || memOf(me.ws.id).selected !== it.id) return;
-      art.innerHTML = renderMarkdown(text, { wsId: me.ws.id, dir: '' });
+      // Relative images load from beside the file (the protocol serves that folder only).
+      const imageUrl = rel => {
+        const parts = rel.split(/[?#]/)[0].split('/').filter(p => p && p !== '.');
+        if (!parts.length || parts.includes('..')) return null;
+        return `polycli-art://${me.ws.id}/${encodeURIComponent(it.id)}/${parts.map(p => { try { return encodeURIComponent(decodeURIComponent(p)); } catch { return encodeURIComponent(p); } }).join('/')}`;
+      };
+      art.innerHTML = renderMarkdown(text, { wsId: me.ws.id, dir: '', imageUrl });
     } catch { art.textContent = 'This file could not be read.'; }
     art.addEventListener('click', e => {
       const a = e.target.closest('a');

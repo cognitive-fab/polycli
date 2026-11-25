@@ -63,7 +63,7 @@ This writes to `dist/`:
   - "Settings prevent the notification type from being delivered" means notifications are off in Windows Settings → System → Notifications.
 - **Folder trust.** If Claude Code hasn't trusted the folder yet, the tab runs plain `claude`, so you answer its trust prompt yourself. After `/exit`, polycli starts the session.
 
-polycli writes only to `%APPDATA%\polycli`: state (workstream variable values encrypted), hook helpers, and per-session settings files (which carry the workstream's variables in plain text, because Claude reads them from there). Your `~/.claude/settings.json` is never changed. Each session gets its hooks and statusLine from its own `--settings` file.
+polycli writes only to `%APPDATA%\polycli`: state (workstream variable values encrypted), hook helpers, and per-session settings files (which carry the workstream's variables in plain text, because Claude reads them from there). Your `~/.claude/settings.json` and `~/.claude.json` are never changed. Each session gets its hooks, statusLine, plugin and skill switches and permissions from its own `--settings` file. Inside a project polycli writes only when you ask: **Copy to project** adds a skill to `.claude/skills`, and **Remove** takes a saved rule out of `.claude/settings.local.json`.
 
 ## Not yet (later phases)
 

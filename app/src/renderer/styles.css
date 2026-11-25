@@ -188,6 +188,33 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .swatch.sel { border-color: var(--text); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
 .modal.wide { width: 680px; max-height: calc(100vh - 48px); overflow-y: auto; }
+/* Workstream settings: tabs, lists of plugins, skills and servers, rule boxes. */
+.modal.settings-modal { width: 780px; }
+.tabset { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin: -4px 0 14px; }
+.tabset button { background: none; border: 0; border-bottom: 2px solid transparent; padding: 6px 12px; color: var(--text-dim); }
+.tabset button:hover { color: var(--text); }
+.tabset button.on { color: var(--accent); border-bottom-color: var(--accent); }
+.cfg-head { display: flex; align-items: center; gap: 8px; margin: 8px 0 6px; font-size: 12px; color: var(--text-dim); }
+.cfg-head .grow { flex: 1; }
+.cfg-list { display: flex; flex-direction: column; gap: 2px; max-height: 260px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; padding: 4px; margin-bottom: 10px; }
+.cfg-row { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; font-size: 12.5px; }
+.cfg-row:hover { background: var(--bg-hover); }
+.cfg-row .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cfg-row small { color: var(--text-faint); }
+.cfg-row.off b { color: var(--text-faint); text-decoration: line-through; }
+.cfg-row select { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; font: inherit; font-size: 12px; }
+.cfg-tok { font-variant-numeric: tabular-nums; color: var(--text-dim); font-size: 12px; min-width: 3.5em; text-align: right; }
+.cfg-group { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-faint); padding: 6px 6px 2px; }
+.cfg-sub { margin: 14px 0 4px; font-size: 13px; }
+.cfg-rules pre, .cfg-list pre { font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap; margin: 6px 0; color: var(--text-dim); }
+.field textarea { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font-family: var(--mono); font-size: 12px; resize: vertical; }
+.rules3 > .field { min-width: 0; }
+.profiles { display: flex; gap: 12px; min-height: 320px; }
+.profile-list { flex: none; width: 180px; display: flex; flex-direction: column; gap: 2px; }
+.profile-list button { text-align: left; background: none; border: 1px solid transparent; border-radius: 6px; padding: 6px 8px; color: var(--text); display: flex; flex-direction: column; }
+.profile-list button small { color: var(--text-faint); font-size: 11px; }
+.profile-list button.on { border-color: var(--accent); background: var(--bg-hover); }
+.profile-edit { flex: 1; min-width: 0; }
 .hint { color: var(--text-faint); font-size: 12px; margin-top: 6px; }
 .warn-text { color: var(--needs); }
 .env-row { display: flex; gap: 6px; margin-bottom: 6px; }

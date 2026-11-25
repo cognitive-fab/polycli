@@ -12,7 +12,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const readline = require('readline');
+const { readNewLines } = require('./jsonl');
 
 const DOC_EXT = /\.(md|markdown|html?|pdf|docx?|pptx?|xlsx?|csv|txt|svg|png|jpe?g|gif|webp)$/i;
 const CLAUDE_ARTIFACT = /^https:\/\/claude\.ai\/(code\/)?artifact\/[\w-]+$/;
@@ -116,21 +116,15 @@ class Artifacts {
   }
 
   // New lines of a transcript since the last scan (it only grows; a shorter file was
-  // rewritten, so it is read again from the start).
+  // rewritten, so it is read again from the start). Only complete lines are read: one
+  // still being written waits for the next scan.
   async scan(file) {
-    let st;
-    try { st = fs.statSync(file); } catch { return; }
-    let s = this.scans.get(file);
-    if (!s || st.size < s.offset) s = { offset: 0, links: new Map(), docs: new Map() };
-    if (st.size === s.offset) return this.scans.set(file, s);
-    const rl = readline.createInterface({ input: fs.createReadStream(file, { start: s.offset, end: st.size - 1, encoding: 'utf8' }), crlfDelay: Infinity });
-    let read = s.offset, last = s.offset;
-    for await (const line of rl) {
-      read += Buffer.byteLength(line, 'utf8') + 1;
-      if (line.includes('"Artifact"') || line.includes('claude.ai/') || line.includes('"file_path"')) scanLine(line, s);
-      last = read;
-    }
-    s.offset = Math.min(last, st.size);
+    let s = this.scans.get(file) || { offset: 0, links: new Map(), docs: new Map() };
+    const r = await readNewLines(file, s.offset);
+    if (r.missing) return;
+    if (r.restarted) s = { offset: 0, links: new Map(), docs: new Map() };
+    for (const line of r.lines) if (line.includes('"Artifact"') || line.includes('claude.ai/') || line.includes('"file_path"')) scanLine(line, s);
+    s.offset = r.offset;
     this.scans.set(file, s);
   }
 }

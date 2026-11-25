@@ -2,6 +2,7 @@
 import { Terminal } from '../../node_modules/@xterm/xterm/lib/xterm.mjs';
 import { FitAddon } from '../../node_modules/@xterm/addon-fit/lib/addon-fit.mjs';
 import { showProject, hideProject, isDirty, renderMarkdown } from './views.js';
+import { wsSettingsDialog as openWsSettings, profilesDialog } from './settings.js';
 
 const api = window.polycli;
 const $ = sel => document.querySelector(sel);
@@ -394,7 +395,12 @@ function noticeFor(s) {
     return `<div class="notice info"><span class="grow">◇ From Cowork (${esc(t.linkTitle)}): ${esc(t.text.split('\n')[0].slice(0, 160))}${t.state === 'queued' && t.waitReason ? ` · ${esc(t.waitReason)}` : ''}${cwTurn.length > 1 ? ` · ${cwTurn.length - 1} more queued` : ''}</span></div>`;
   }
   const w = S.workstreams.find(x => x.id === s.workstreamId);
-  if (w && s.state !== 'closed' && (s.envRev || 0) !== (w.envRev || 0)) return `<div class="notice info"><span class="grow">The workstream's environment variables changed. Restart the session to apply them (the conversation is kept).</span><button class="btn" data-act="restart">⟳ Restart</button></div>`;
+  const envOld = w && (s.envRev || 0) !== (w.envRev || 0), cfgOld = w && (s.cfgRev || 0) !== (w.cfgRev || 0);
+  if (w && s.state !== 'closed' && (envOld || cfgOld)) {
+    const what = envOld && cfgOld ? 'environment variables and Claude settings' : envOld ? 'environment variables' : 'Claude settings (plugins, skills, MCP servers or permissions)';
+    const others = S.sessions.filter(x => x.workstreamId === w.id && x.open && x.state !== 'closed' && ((x.envRev || 0) !== (w.envRev || 0) || (x.cfgRev || 0) !== (w.cfgRev || 0))).length;
+    return `<div class="notice info"><span class="grow">The workstream's ${what} changed. Restart the session to apply them (the conversation is kept)${s.restartWhenIdle ? '; it restarts when Claude is done' : ''}.</span>${others > 1 ? `<button class="btn" data-act="restart-ws" title="Restart every session of this workstream that runs with older settings; one Claude is working in restarts when it is done">⟳ Restart all ${others}</button>` : ''}<button class="btn" data-act="restart">⟳ Restart</button></div>`;
+  }
   if (s.state === 'failed') return `<div class="notice err"><span class="grow">${esc(s.error || 'The session failed to start.')}</span><button class="btn" data-act="restart">Try again</button></div>`;
   if (s.state === 'detached' && !s.termLive) return `<div class="notice info"><span class="grow">Detached. The session keeps running in the background.</span><button class="btn" data-act="reopen">Reattach</button></div>`;
   if (s.error) return `<div class="notice err"><span class="grow">${esc(s.error)}</span></div>`;
@@ -1356,64 +1362,9 @@ function newSessionDialog(ws) {
   browseButton(form, 'cwd');
 }
 
-const BILLING_VARS = /^(ANTHROPIC_|CLAUDE_CODE_USE_)/i;
-
-// Workstream settings: name, color, environment variables (stored encrypted, values
-// never shown again) and the global keys this workstream relies on.
-async function wsSettingsDialog(ws) {
-  let color = ws.color;
-  const globals = await call('globalKeys').catch(() => []);
-  const uses = new Set(ws.uses || []);
-  const envRow = (name = '', existing = false) => `<div class="env-row" ${existing ? 'data-existing="1"' : ''}>
-      <input class="env-name" value="${esc(name)}" placeholder="NAME" spellcheck="false" ${existing ? 'readonly title="Remove and add again to rename"' : ''}>
-      <input class="env-value" type="password" autocomplete="off" placeholder="${existing ? 'saved · type to replace' : 'value'}">
-      <button type="button" class="btn env-del" title="Remove">✕</button>
-    </div>`;
-  const form = modal(`<h3>${esc(ws.name)} · settings</h3>
-    <div class="row">
-      <label class="field"><span>Name</span><input name="name" value="${esc(ws.name)}" maxlength="60" required></label>
-      <div class="field" style="flex:none"><span>Color</span><div class="swatches">${COLORS.map(c => `<button type="button" class="swatch ${c === color ? 'sel' : ''}" data-color="${c}" style="background:${c}"></button>`).join('')}</div></div>
-    </div>
-    <div class="field"><span>Environment variables for this workstream</span>
-      <div id="envRows">${(ws.env || []).map(e => envRow(e.name, true)).join('')}</div>
-      <div><button type="button" class="btn" id="envAdd">+ Add variable</button></div>
-      <div class="hint" id="envWarn"></div>
-      <div class="hint">Every Claude session and new shell in this workstream gets them, on top of your Windows variables (a workstream value wins). Values are stored encrypted for your Windows account and are not shown again. When a session starts they are written into its settings file under %APPDATA%\\polycli\\run, which Claude reads. Running sessions pick up changes on Restart.</div>
-    </div>
-    <div class="row">
-      <label class="field"><span>Prompts from linked Cowork tasks</span><select name="coworkSend"><option value="ask" ${(ws.coworkSend || 'ask') === 'ask' ? 'selected' : ''}>Ask me each time</option><option value="allow" ${ws.coworkSend === 'allow' ? 'selected' : ''}>Send without asking</option></select></label>
-    </div>
-    <label class="field"><span>Deploy command (runs in a new shell tab from the Deploy button; leave empty to use a package.json "deploy" script if there is one)</span><input name="deploy" value="${esc(ws.deploy || '')}" placeholder="npm run deploy" spellcheck="false" style="font-family:var(--mono)"></label>
-    <label class="check-row"><input type="checkbox" name="billable" ${ws.billable ? 'checked' : ''}><span>Billable workstream: count my time while it is selected and polycli is focused, minus Claude's generation time. Monthly totals are in the top-right pill.</span></label>
-    <div class="field"><span>Global keys this workstream uses (for your own tracking; every session already has them)</span>
-      <div class="key-checks">${globals.length ? globals.map(g => `<label class="key-check"><input type="checkbox" name="uses" value="${esc(g.name)}" ${uses.has(g.name) ? 'checked' : ''}><code>${esc(g.name)}</code>${g.scope === 'machine' ? '<small>machine</small>' : ''}</label>`).join('') : '<span class="hint">No key-like Windows variables found.</span>'}</div>
-    </div>
-    <div class="modal-actions"><button type="button" class="btn danger" id="wsArchive" style="margin-right:auto" title="Close its sessions and shells and hide it from the rail">Archive workstream…</button><button type="button" class="btn" data-cancel>Cancel</button><button class="btn primary">Save</button></div>`,
-  async (fd, f) => {
-    const env = [...f.querySelectorAll('.env-row')].map(r => {
-      const name = r.querySelector('.env-name').value.trim();
-      const value = r.querySelector('.env-value').value;
-      return r.dataset.existing && !value ? { name } : { name, value };
-    }).filter(e => e.name || e.value);
-    await api.call('updateWorkstream', { id: ws.id, name: fd.get('name'), color, env, uses: fd.getAll('uses'), deploy: fd.get('deploy'), coworkSend: fd.get('coworkSend') });
-    if ((fd.get('billable') === 'on') !== !!ws.billable) await api.call('setBillable', { workstreamId: ws.id, on: fd.get('billable') === 'on' });
-    toast('Workstream saved');
-  }, { wide: true });
-  const rows = form.querySelector('#envRows');
-  const warn = () => {
-    const names = [...rows.querySelectorAll('.env-name')].map(i => i.value.trim()).filter(n => BILLING_VARS.test(n));
-    form.querySelector('#envWarn').innerHTML = names.length ? `<span class="warn-text">${names.map(esc).join(', ')} change${names.length === 1 ? 's' : ''} how Claude itself signs in and bills (an API key here moves this workstream off your Claude plan).</span>` : '';
-  };
-  form.querySelector('#envAdd').onclick = () => { rows.insertAdjacentHTML('beforeend', envRow()); rows.lastElementChild.querySelector('.env-name').focus(); };
-  rows.addEventListener('click', e => { if (e.target.closest('.env-del')) { e.target.closest('.env-row').remove(); warn(); } });
-  rows.addEventListener('input', warn);
-  warn();
-  form.querySelector('#wsArchive').onclick = () => archiveDialog(ws);
-  form.querySelectorAll('[data-color]').forEach(b => b.onclick = () => {
-    color = b.dataset.color;
-    form.querySelectorAll('.swatch').forEach(x => x.classList.toggle('sel', x === b));
-  });
-}
+// Workstream settings and permission profiles: settings.js.
+const settingsHelpers = () => ({ S, modal, call, api, toast, esc, COLORS, archiveDialog });
+const wsSettingsDialog = ws => openWsSettings(ws, settingsHelpers());
 
 function archiveDialog(ws) {
   const open = sessionsOf(ws.id).filter(isOpenSession), shells = shellsOf(ws.id);
@@ -1530,6 +1481,7 @@ async function appSettingsDialog() {
     <label class="check-row"><input type="checkbox" name="login" ${li.on ? 'checked' : ''}><span>Start polycli when I sign in to Windows</span></label>
     <p class="hint">${li.packaged ? '' : 'polycli runs from source here, so Windows starts Electron with this app folder; Startup apps in Windows Settings lists it as Electron. '}Claude sessions that were open are reattached when it starts; after a restart of Windows they start again with their conversation.</p>
     <label class="check-row"><input type="checkbox" name="cwAuto" ${S.cowork?.auto ? 'checked' : ''}><span>Accept Cowork requests automatically: a link to a workstream the task names, and every prompt (one starting with /, !, # or @ still asks). Otherwise each request opens a dialog.</span></label>
+    <div class="field"><span>Permission profiles</span><div class="row"><span class="hint grow">${(S.profiles || []).map(p => esc(p.name)).join(', ')}: guardrails each workstream picks in its ⚙ Settings.</span><button type="button" class="btn" id="editProfiles" style="flex:none">Edit profiles…</button></div></div>
     <div class="modal-actions"><button type="button" class="btn" data-cancel>Cancel</button><button class="btn primary">Save</button></div>`,
   async fd => {
     const on = fd.get('login') === 'on';
@@ -1537,6 +1489,7 @@ async function appSettingsDialog() {
     const auto = fd.get('cwAuto') === 'on';
     if (auto !== !!S.cowork?.auto) { await call('coworkAuto', { on: auto }); toast(auto ? 'Cowork requests are now accepted automatically' : 'Cowork requests ask again'); }
   });
+  form.querySelector('#editProfiles').onclick = () => profilesDialog(settingsHelpers());
   return form;
 }
 
@@ -1619,6 +1572,10 @@ document.addEventListener('click', async e => {
   if (act === 'gh-pr' && ses?.git?.pr) return call('openGithub', { url: ses.git.pr.url });
   if (act === 'copy-id' && sid) { const s = S.sessions.find(x => x.id === sid); if (s?.bgId) copyText(`claude attach ${s.bgId}`, `Copied: claude attach ${s.bgId}`); return; }
   if ((act === 'restart' || act === 'retrust') && sid) return call('restartSession', { id: sid });
+  if (act === 'restart-ws' && sid) {
+    const s = S.sessions.find(x => x.id === sid);
+    if (s) return call('restartWorkstreamSessions', { workstreamId: s.workstreamId }).then(r => toast(`${r.now} restarting${r.later ? `, ${r.later} when Claude is done` : ''}`));
+  }
   if (act === 'delete' && sid) {
     const s = S.sessions.find(x => x.id === sid);
     const form = modal(`<h3>Delete “${esc(s?.name)}”?</h3><p style="color:var(--text-dim)">This stops the session and removes its background record. Use Close instead to keep the conversation.</p>

@@ -23,7 +23,9 @@ const q = s => `"${s.replace(/\\/g, '/')}"`;
 // the Claude session id is known. `env` is the workstream's environment: Claude applies
 // a settings `env` block to the session (variables of the launching process don't
 // reach a background session), and re-reads the file on respawn and on reopen.
-function writeSettings(slot, env = {}) {
+// `config`: the workstream's Claude configuration (sessions.js sessionConfig):
+// enabledPlugins, skillOverrides and permissions, each left out when it adds nothing.
+function writeSettings(slot, env = {}, config = {}) {
   const hook = path.join(paths.bin, 'hook.mjs');
   const status = path.join(paths.bin, 'status.mjs');
   const hooks = {};
@@ -36,6 +38,7 @@ function writeSettings(slot, env = {}) {
   const settings = { hooks, statusLine: { type: 'command', command: `node ${q(status)} ${slot} ${paths.pipeName}` } };
   // For `node "$POLYCLI_POST" "message"` (bin/post.mjs): messages to the linked Cowork task.
   settings.env = { ...env, POLYCLI_SLOT: slot, POLYCLI_PIPE: paths.pipeName, POLYCLI_POST: path.join(paths.bin, 'post.mjs').replace(/\\/g, '/') };
+  for (const k of ['enabledPlugins', 'skillOverrides', 'permissions']) if (config[k]) settings[k] = config[k];
   const file = path.join(paths.run, `${slot}.settings.json`);
   fs.writeFileSync(file, JSON.stringify(settings, null, 2));
   return file;

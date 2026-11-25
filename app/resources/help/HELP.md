@@ -141,13 +141,31 @@ Click the **⧉ id** in the header to copy `claude attach <id>`, and run it in a
 
 ![Workstream settings](settings.png)
 
-- **⚙ Settings → Environment variables**: name/value pairs given to every Claude session and new shell of the workstream, on top of your Windows variables. Values are stored encrypted and never shown again. Running sessions pick up a change on **Restart**; the tab tells you when one is needed.
+A workstream's **⚙ Settings** has four tabs: **General** (name, color, Cowork prompts, deploy command, billable), **Environment**, **Plugins and skills**, and **MCP and permissions**. Changes reach running sessions when they restart: a notice above each session says so, with **⟳ Restart** for that one and **Restart all** for the workstream (a session Claude is working in restarts when it is done).
+
+- **⚙ Settings → Environment**: name/value pairs given to every Claude session and new shell of the workstream, on top of your Windows variables. Values are stored encrypted and never shown again. Running sessions pick up a change on **Restart**; the tab tells you when one is needed.
 - Variables that start with `ANTHROPIC_` or `CLAUDE_CODE_USE_` change how Claude itself signs in and bills, and polycli warns about them.
 - **Global keys this workstream uses**: tick the Windows key variables the workstream relies on, for your own tracking.
 
 ![Keys](keys.png)
 
 **Keys** in the top bar lists the key-like variables saved in Windows (names only), which workstreams use each one, and which workstreams set their own value.
+
+## Plugins, skills, MCP servers and permissions
+
+**⚙ Settings → Plugins and skills** sets what the workstream's Claude sessions load:
+
+- **Plugins**: each installed plugin with the tokens it adds to every request. *As in Claude* follows `claude plugin enable/disable`; **On** and **Off** apply to this workstream only. The line on top adds up the context the plugins that are on cost.
+- **Skills**: your own and the project's skills can each be **On**, **Name only** (usable, but its description stays out of every request), **Only when I type it** (`/name`) or **Off**. A plugin's skills follow their plugin. **Copy to project** puts one of your skills into the project's `.claude/skills`, so it travels with the repository.
+
+**⚙ Settings → MCP and permissions**:
+
+- **MCP servers**: untick a server to deny all its tools in this workstream. **Check connections** asks Claude which servers connect and adds your claude.ai connectors to the list.
+- **Profile**: guardrails shared by workstreams. *Standard* adds nothing; *No publishing* never creates or forks repositories, changes remotes or publishes to npm; *Careful* asks before web access, pushes, installs and publishing and never runs `rm`; *Live systems* asks before `aws`, `ssh`, `scp`, `kubectl` and anything naming `prod`, and blocks AWS deletes. Edit them, or add your own, in polycli **⚙ → Edit profiles…**.
+- **Permission mode** and the workstream's own **Deny**, **Ask first** and **Allow** rules, one per line in Claude's syntax (`Bash(git push *)`, `WebFetch`, `mcp__slack`), added to the profile's. A deny wins over any allow, in the project's own settings too. Ask rules still ask in auto mode.
+- **The project's saved rules**: the rules "always allow" saved in the folder's `.claude/settings.local.json`. Rules that hold a password or key, or allow a whole tool, are flagged, with the secret masked; **Remove** takes one out of that file.
+
+Everything is written as ordinary Claude settings into the session's own settings file, so `/permissions`, `/mcp` and `/skills` inside a session show what polycli set.
 
 ## Cowork bridge
 

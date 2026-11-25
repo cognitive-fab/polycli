@@ -20,6 +20,7 @@ const { cleanEnv } = require('./env');
 const secrets = require('./secrets');
 const gitinfo = require('./git');
 const { paths, checkedDir, tildify } = require('./paths');
+const { DEFAULT_PROFILES, cleanPermissions, cleanProfile, sessionPermissions } = require('./profiles');
 
 const MODELS = ['', 'opus', 'sonnet', 'haiku'];
 const EFFORTS = ['', 'low', 'medium', 'high', 'xhigh', 'max'];
@@ -28,6 +29,29 @@ const NO_REMOTE_VARS = /^(ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|ANTHROPIC_BASE_
 const PERMISSION_MODES =['', 'default', 'acceptEdits', 'plan'];
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const ENV_MAX = 50;
+const SKILL_LEVELS = ['off', 'name-only', 'user-invocable-only'];
+const PLUGIN_ID = /^[\w.@+-]{1,120}$/;
+const SKILL_NAME = /^[\w.:+-]{1,120}$/;
+// Plugin switches: { 'name@marketplace': true | false }; an absent plugin follows Claude.
+function cleanPluginSwitches(o) {
+  if (!o || typeof o !== 'object' || Array.isArray(o)) throw new Error('plugins must be an object');
+  const out = {};
+  for (const [k, v] of Object.entries(o)) {
+    if (!PLUGIN_ID.test(k)) throw new Error(`"${String(k).slice(0, 60)}" is not a plugin id`);
+    if (typeof v === 'boolean') out[k] = v;
+  }
+  return out;
+}
+// Skill switches: { name: 'off' | 'name-only' | 'user-invocable-only' }; absent = on.
+function cleanSkillSwitches(o) {
+  if (!o || typeof o !== 'object' || Array.isArray(o)) throw new Error('skills must be an object');
+  const out = {};
+  for (const [k, v] of Object.entries(o)) {
+    if (!SKILL_NAME.test(k)) throw new Error(`"${String(k).slice(0, 60)}" is not a skill name`);
+    if (SKILL_LEVELS.includes(v)) out[k] = v;
+  }
+  return out;
+}
 const DOC_EXT = /\.(md|html?|pdf|docx?|pptx?|xlsx?|csv|txt)$/i;
 const POLL_MS = 5000;
 const GIT_STALE_MS = 20000;   // background refresh of the git line for open sessions
@@ -104,6 +128,7 @@ class Manager extends EventEmitter {
     super();
     this.pty = pty;
     this.state = store.load();
+    if (!Array.isArray(this.state.profiles) || !this.state.profiles.length) this.state.profiles = structuredClone(DEFAULT_PROFILES);
     this.plan = claude.planName();
     this.expectExit = new Set();      // terminal ids we are closing on purpose
     this.reattachLog = new Map();     // session id → recent reattach timestamps
@@ -134,7 +159,7 @@ class Manager extends EventEmitter {
   }
   snapshot() {
     return {
-      workstreams: this.state.workstreams.map(w => ({ ...w, env: (w.env || []).map(e => ({ name: e.name })), uses: w.uses || [], envRev: w.envRev || 0, folderShort: tildify(w.folder) })),
+      workstreams: this.state.workstreams.map(w => ({ ...w, env: (w.env || []).map(e => ({ name: e.name })), uses: w.uses || [], envRev: w.envRev || 0, cfgRev: w.cfgRev || 0, folderShort: tildify(w.folder) })),
       sessions: this.state.sessions.map(s => {
         const here = s.liveCwd || s.cwd;
         const g = this.gitByDir.get(dirKey(here));
@@ -147,6 +172,7 @@ class Manager extends EventEmitter {
       shells: this.state.shells.map(h => ({ ...h, termLive: this.pty.isLive(`h:${h.id}`), cwdShort: tildify(h.cwd) })),
       ui: this.state.ui,
       plan: this.plan,
+      profiles: this.state.profiles,
     };
   }
   ws(id) {
@@ -178,6 +204,11 @@ class Manager extends EventEmitter {
       store.event('state', { session: s.id, from: before, to: patch.state });
       this.emit('session-state', s, before, patch.state);
       if (patch.state === 'needs-you') this.emit('attention', s);
+      // A Restart asked for while Claude was working (restartWorkstreamSessions).
+      if (patch.state === 'idle' && s.restartWhenIdle && !s.asking) {
+        delete s.restartWhenIdle;
+        setImmediate(() => this.restartSession(s.id).catch(e => this.set(s, { error: clip(String(e.message || e), 300) })));
+      }
     }
     this.changed();
   }
@@ -223,8 +254,23 @@ class Manager extends EventEmitter {
   }
   // Workstream settings. env: [{ name, value? }]; a missing value keeps the stored one.
   // uses: names of global variables this workstream relies on (bookkeeping only).
-  updateWorkstream({ id, name, color, env, uses, deploy, coworkSend }) {
+  updateWorkstream({ id, name, color, env, uses, deploy, coworkSend, plugins, skills, mcpOff, profile, perm }) {
     const w = this.ws(id);
+    // Claude configuration (docs/design/v0.4.md §1, §2). Only overrides are stored; a
+    // change marks the workstream's sessions as needing a Restart (cfgRev).
+    const cfgBefore = JSON.stringify([w.plugins, w.skills, w.mcpOff, w.profile, w.perm]);
+    if (plugins !== undefined) w.plugins = cleanPluginSwitches(plugins);
+    if (skills !== undefined) w.skills = cleanSkillSwitches(skills);
+    if (mcpOff !== undefined) {
+      if (!Array.isArray(mcpOff)) throw new Error('mcpOff must be a list');
+      w.mcpOff = [...new Set(mcpOff.map(s => String(s ?? '').trim()).filter(s => s && s.length <= 120))].slice(0, 100);
+    }
+    if (profile !== undefined) {
+      if (profile && !this.state.profiles.some(p => p.id === profile)) throw new Error('unknown permission profile');
+      w.profile = profile || 'standard';
+    }
+    if (perm !== undefined) w.perm = cleanPermissions(perm || {});
+    if (JSON.stringify([w.plugins, w.skills, w.mcpOff, w.profile, w.perm]) !== cfgBefore) w.cfgRev = (w.cfgRev || 0) + 1;
     // Cowork bridge policy for prompts: ask (default) or allow.
     if (coworkSend !== undefined) w.coworkSend = coworkSend === 'allow' ? 'allow' : 'ask';
     if (deploy !== undefined) {
@@ -274,7 +320,49 @@ class Manager extends EventEmitter {
   writeSessionSettings(s) {
     const w = this.ws(s.workstreamId);
     s.envRev = w.envRev || 0;
-    return writeSettings(s.id, this.envFor(w));
+    s.cfgRev = w.cfgRev || 0;
+    return writeSettings(s.id, this.envFor(w), this.sessionConfig(w));
+  }
+  // What a workstream sets in Claude for its sessions: plugins and skills switched on or
+  // off, and the permissions of its profile, its own rules and its MCP servers that are off.
+  sessionConfig(w) {
+    const nonEmpty = o => (o && Object.keys(o).length ? o : null);
+    return { enabledPlugins: nonEmpty(w.plugins), skillOverrides: nonEmpty(w.skills), permissions: sessionPermissions(w, this.state.profiles) };
+  }
+
+  // Permission profiles, shared by all workstreams. A change reaches the sessions of every
+  // workstream that uses a changed profile on their next Restart.
+  setProfiles(list) {
+    if (!Array.isArray(list) || !list.length || list.length > 30) throw new Error('Between 1 and 30 profiles');
+    const next = list.map(cleanProfile);
+    const ids = new Set();
+    for (const p of next) { if (ids.has(p.id)) throw new Error(`Two profiles are named ${p.name}`); ids.add(p.id); }
+    if (!ids.has('standard')) throw new Error('The Standard profile can be changed but not removed');
+    const before = new Map(this.state.profiles.map(p => [p.id, JSON.stringify(p)]));
+    this.state.profiles = next;
+    for (const w of this.state.workstreams) {
+      const id = w.profile || 'standard';
+      if (!ids.has(id)) { w.profile = 'standard'; w.cfgRev = (w.cfgRev || 0) + 1; continue; }
+      if (before.get(id) !== JSON.stringify(next.find(p => p.id === id))) w.cfgRev = (w.cfgRev || 0) + 1;
+    }
+    this.changed();
+  }
+
+  // Restart the open sessions of a workstream whose settings are behind its current
+  // configuration or environment. A session Claude is working in restarts as soon as it is
+  // idle, so no answer is cut off.
+  restartWorkstreamSessions(workstreamId) {
+    const w = this.ws(workstreamId);
+    const stale = this.state.sessions.filter(s => s.workstreamId === w.id && s.open && s.state !== 'closed'
+      && ((s.envRev || 0) !== (w.envRev || 0) || (s.cfgRev || 0) !== (w.cfgRev || 0)));
+    let now = 0, later = 0;
+    for (const s of stale) {
+      if (['busy', 'needs-you'].includes(s.state) || s.asking) { s.restartWhenIdle = true; later++; continue; }
+      now++;
+      this.restartSession(s.id).catch(e => this.set(s, { error: clip(String(e.message || e), 300) }));
+    }
+    this.changed();
+    return { now, later };
   }
 
   setActive(id) {

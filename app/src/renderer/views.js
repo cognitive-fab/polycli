@@ -37,6 +37,11 @@ function inline(text, ctx) {
   t = t.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;[^)]*&quot;)?\)/g, (_m, alt, src) => {
     const url = src.replace(/&amp;/g, '&');
     if (/^data:image\/(png|jpe?g|gif|webp);base64,/i.test(url)) return `<img alt="${alt}" src="${esc(url)}">`;
+    // A document outside docs/ (an artifact) says itself where its images are.
+    if (ctx.imageUrl) {
+      const src = /^[a-z]+:/i.test(url) ? null : ctx.imageUrl(url);
+      return src && IMG.test(url.split(/[?#]/)[0]) ? `<img alt="${alt}" src="${esc(src)}">` : `<span class="md-missing">[image: ${alt || esc(url)}]</span>`;
+    }
     const rel = /^[a-z]+:/i.test(url) ? null : resolveRel(ctx.dir, url);
     return rel && IMG.test(rel) ? `<img alt="${alt}" src="${esc(viewUrl(ctx.wsId, rel))}">` : `<span class="md-missing">[image: ${alt || esc(url)}]</span>`;
   });

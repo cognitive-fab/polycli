@@ -170,6 +170,21 @@ const OPS = {
   createWorkstream: a => manager.createWorkstream(a),
   renameWorkstream: a => manager.renameWorkstream(a),
   updateWorkstream: a => manager.updateWorkstream(a),
+  // Workstream Claude configuration (docs/design/v0.4.md §1, §2).
+  claudeInventory: async a => {
+    const cc = require('./claudeconfig');
+    const w = manager.ws(a.workstreamId);
+    const opts = { refresh: !!a.refresh };
+    const plugins = await cc.plugins(opts);
+    const [skills, mcp] = await Promise.all([cc.skills(w.folder, opts), cc.mcpServers(w.folder, { ...opts, health: !!a.health })]);
+    return { plugins, skills, mcp };
+  },
+  pluginCost: a => require('./claudeconfig').pluginCost(String(a.id)),
+  copySkillToProject: a => require('./claudeconfig').copySkillToProject(manager.ws(a.workstreamId).folder, a.path),
+  projectRules: a => require('./claudeconfig').projectRules(manager.ws(a.workstreamId).folder),
+  removeProjectRule: a => require('./claudeconfig').removeProjectRule(manager.ws(a.workstreamId).folder, String(a.key)),
+  setProfiles: a => manager.setProfiles(a.profiles),
+  restartWorkstreamSessions: a => manager.restartWorkstreamSessions(a.workstreamId),
   archiveWorkstream: a => manager.archiveWorkstream({ id: a.id }),
   restoreWorkstream: a => manager.restoreWorkstream({ id: a.id }),
   globalKeys: () => require('./env').globalKeys(),

@@ -667,8 +667,44 @@ async function runPackaged({ app, win, manager }) {
   app.exit(report.ok ? 0 : 1);
 }
 
+// Workstream Claude configuration (docs/design/v0.4.md §1, §2): a session started in a
+// workstream with a plugin, a skill and an MCP server switched off and the Careful profile
+// must not have them, and its settings file must carry the profile's rules.
+async function runSettings({ app, manager }) {
+  const report = { phase: 'settings' };
+  let sid = null;
+  try {
+    const ws = manager.createWorkstream({ name: 'settings-test', folder: FOLDER });
+    manager.updateWorkstream({ id: ws.id, plugins: { 'archlens@arch-lens': false }, skills: { archify: 'off' }, mcpOff: ['agentmesh'], profile: 'careful' });
+    const s = await manager.newSession({ workstreamId: ws.id, role: 'cfg', model: 'haiku' });
+    sid = s.id;
+    const S = () => manager.session(sid);
+    const settings = JSON.parse(fs.readFileSync(path.join(process.env.POLYCLI_HOME, 'run', `${sid}.settings.json`), 'utf8'));
+    report.file = { enabledPlugins: settings.enabledPlugins, skillOverrides: settings.skillOverrides, ask: (settings.permissions?.ask || []).length, deny: settings.permissions?.deny };
+    await waitFor(() => S().state === 'idle' && manager.pty.isLive(`s:${sid}`), 60000, 'idle');
+    await manager.submitPrompt(sid, 'Without calling any tool, reply with one line of JSON only: {"skills": [every skill name in your skills list], "mcp": [every distinct MCP server prefix among your tool names]}');
+    await waitFor(() => S().state === 'idle' && /\{[\s\S]*"skills"/.test(S().lastMessage || ''), 120000, 'answer');
+    // The whole answer is in the transcript (lastMessage is clipped).
+    const last = require('./sessions').transcriptTail(S().transcriptPath);
+    const text = (last?.message?.content || []).map(c => c.text || '').join('');
+    const j = JSON.parse(/\{[\s\S]*\}/.exec(text)[0]);
+    const mcp = (j.mcp || []).map(x => String(x).replace(/^mcp__/, ''));
+    report.session = { skills: j.skills.length, archify: j.skills.includes('archify'), archlens: j.skills.some(x => /archlens/.test(x)), agentmesh: mcp.includes('agentmesh'), mcp };
+    report.ok = !!(settings.enabledPlugins?.['archlens@arch-lens'] === false && settings.skillOverrides?.archify === 'off' && settings.permissions?.deny?.includes('mcp__agentmesh')
+      && report.file.ask > 0 && !report.session.archify && !report.session.archlens && !report.session.agentmesh);
+  } catch (e) {
+    report.ok = false;
+    report.error = String(e.stack || e);
+  }
+  if (sid) { try { await manager.deleteSession(sid); } catch {} }
+  fs.writeFileSync(path.join(OUT, 'settings.json'), JSON.stringify(report, null, 2));
+  console.log('SMOKE settings', JSON.stringify(report));
+  app.exit(report.ok ? 0 : 1);
+}
+
 async function run(ctx) {
   fs.mkdirSync(OUT, { recursive: true });
+  if (process.env.POLYCLI_SMOKE === 'settings') return runSettings(ctx);
   if (process.env.POLYCLI_SMOKE === 'packaged') return runPackaged(ctx);
   if (process.env.POLYCLI_SMOKE === 'bridge') return runBridge(ctx);
   if (process.env.POLYCLI_SMOKE === 'help') return runHelp(ctx);
