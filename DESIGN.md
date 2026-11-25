@@ -365,6 +365,7 @@ Per workstream (keyed by id, name kept for history), in hourly local buckets in 
 | **1: Core terminal** | Workstreams; new / close / reopen / restart / restart-fresh / delete; headers; VS Code launch; shells and recipes; layouts; reattach on restart; status reconciliation; needs-you inbox and toasts. | A day of CLI work done in polycli. Killing polycli loses **no Claude session**, and shells come back from their recipes. |
 | **2: Cowork read side** | CoworkIndex; manual CoworkLinks; Artifacts panel (Cowork + CLI); pin a copy. | Every artifact and output of a linked Cowork task is listed and opens in one click. |
 | **3: Bridge** | `polycli-bridge` extension; send/read/status; approvals and policies; audit-log attribution. | Cowork sends a prompt to a named CLI session, the user approves it once, and Cowork reads the answer back without the user copy-pasting. |
+| **0.4: Configure and oversee** | Plugins, skills, MCP servers and permission profiles per workstream; context meter and hand-off; polywatch findings and the code-review light; worktree manager; command palette; auto-update and settings export. Design and plan: [`docs/design/v0.4.md`](docs/design/v0.4.md). | A workstream carries its own Claude configuration, and polycli says when a session needs a review, a hand-off or a cleanup. |
 
 ## 12. Later
 - **WSL**: `wsl.exe -d <distro> -- claude --bg …` + attach; hooks via `/mnt/c` interop; distro-side `claude agents --json`, polled only when the distro is running.
