@@ -189,6 +189,7 @@ const OPS = {
   setProfiles: a => manager.setProfiles(a.profiles),
   restartWorkstreamSessions: a => manager.restartWorkstreamSessions(a.workstreamId),
   // polywatch findings and the code-review light (docs/design/v0.4.md §6).
+  findingsFor: a => polywatch.openFor((Array.isArray(a.sessionIds) ? a.sessionIds : []).map(String).slice(0, 100)),
   findingOutcome: a => polywatch.outcome({ root: polywatch.view().sessions[a.sessionId]?.root, review: a.review, n: a.n, verdict: a.verdict, note: a.note }),
   runCodeReview: a => {
     const s = manager.session(a.id);
@@ -216,7 +217,7 @@ const OPS = {
   },
   importApply: async a => {
     if (!pendingImport) throw new Error('Choose the file to import again');
-    const out = await require('./settingsio').applyImport(manager, pendingImport, a.choices || {}, { setBillable: (w, on) => billing.setBillable(w, on) });
+    const out = await require('./settingsio').applyImport(manager, pendingImport, a.choices || {}, { setBillable: (w, on) => billing.setBillable(w, on), shells: a.shells !== false });
     pendingImport = null;
     return out;
   },

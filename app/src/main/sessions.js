@@ -132,7 +132,7 @@ class Manager extends EventEmitter {
     super();
     this.pty = pty;
     this.state = store.load();
-    if (!Array.isArray(this.state.profiles) || !this.state.profiles.length) this.state.profiles = structuredClone(DEFAULT_PROFILES);
+    if (!Array.isArray(this.state.profiles) || !this.state.profiles.length) this.state.profiles = DEFAULT_PROFILES.map(cleanProfile);
     this.plan = claude.planName();
     this.expectExit = new Set();      // terminal ids we are closing on purpose
     this.reattachLog = new Map();     // session id → recent reattach timestamps
@@ -263,7 +263,9 @@ class Manager extends EventEmitter {
     const w = this.ws(id);
     // Claude configuration (docs/design/v0.4.md §1, §2). Only overrides are stored; a
     // change marks the workstream's sessions as needing a Restart (cfgRev).
-    const cfgBefore = JSON.stringify([w.plugins, w.skills, w.mcpOff, w.profile, w.perm]);
+    // Compared as what the session's settings file would get, so saving the dialog without
+    // a change (or with only a rename) doesn't ask every session for a Restart.
+    const cfgBefore = JSON.stringify(this.sessionConfig(w));
     if (plugins !== undefined) w.plugins = cleanPluginSwitches(plugins);
     if (skills !== undefined) w.skills = cleanSkillSwitches(skills);
     if (mcpOff !== undefined) {
@@ -275,7 +277,7 @@ class Manager extends EventEmitter {
       w.profile = profile || 'standard';
     }
     if (perm !== undefined) w.perm = cleanPermissions(perm || {});
-    if (JSON.stringify([w.plugins, w.skills, w.mcpOff, w.profile, w.perm]) !== cfgBefore) w.cfgRev = (w.cfgRev || 0) + 1;
+    if (JSON.stringify(this.sessionConfig(w)) !== cfgBefore) w.cfgRev = (w.cfgRev || 0) + 1;
     // Cowork bridge policy for prompts: ask (default) or allow.
     if (coworkSend !== undefined) w.coworkSend = coworkSend === 'allow' ? 'allow' : 'ask';
     if (deploy !== undefined) {
@@ -343,12 +345,12 @@ class Manager extends EventEmitter {
     const ids = new Set();
     for (const p of next) { if (ids.has(p.id)) throw new Error(`Two profiles are named ${p.name}`); ids.add(p.id); }
     if (!ids.has('standard')) throw new Error('The Standard profile can be changed but not removed');
-    const before = new Map(this.state.profiles.map(p => [p.id, JSON.stringify(p)]));
+    // A workstream needs a Restart only if what its sessions get actually changed.
+    const before = new Map(this.state.workstreams.map(w => [w.id, JSON.stringify(sessionPermissions(w, this.state.profiles))]));
     this.state.profiles = next;
     for (const w of this.state.workstreams) {
-      const id = w.profile || 'standard';
-      if (!ids.has(id)) { w.profile = 'standard'; w.cfgRev = (w.cfgRev || 0) + 1; continue; }
-      if (before.get(id) !== JSON.stringify(next.find(p => p.id === id))) w.cfgRev = (w.cfgRev || 0) + 1;
+      if (!ids.has(w.profile || 'standard')) w.profile = 'standard';
+      if (before.get(w.id) !== JSON.stringify(sessionPermissions(w, next))) w.cfgRev = (w.cfgRev || 0) + 1;
     }
     this.changed();
   }

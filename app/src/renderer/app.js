@@ -389,10 +389,11 @@ const SEVR = { high: 3, medium: 2, low: 1 };
 const reviewOf = id => S.review?.sessions?.[id] || null;
 // The number of confirmed findings still open for these sessions, colored by the worst.
 function findingsBadge(ids, target) {
-  const open = ids.map(reviewOf).filter(Boolean).flatMap(r => r.open.filter(f => !f.possiblyFixed));
-  if (!open.length) return '';
-  const worst = open.reduce((m, f) => (SEVR[f.severity] > SEVR[m] ? f.severity : m), 'low');
-  return `<span class="pw-badge sev-${worst}" data-findings="${target}" title="${open.length} confirmed polywatch finding${open.length === 1 ? '' : 's'} with no outcome yet; click to review">${open.length}</span>`;
+  const rs = ids.map(reviewOf).filter(Boolean);
+  const n = rs.reduce((k, r) => k + (r.openCount || 0), 0);
+  if (!n) return '';
+  const worst = rs.reduce((m, r) => (SEVR[r.maxSeverity] > SEVR[m] ? r.maxSeverity : m), 'low');
+  return `<span class="pw-badge sev-${worst}" data-findings="${target}" title="${n} confirmed polywatch finding${n === 1 ? '' : 's'} of the last two weeks with no outcome yet; click to review">${n}</span>`;
 }
 // A workstream's light: the worst of its sessions'.
 function reviewDot(wsId) {
@@ -421,7 +422,7 @@ function reviewLightDialog(sid) {
     ${r.push && r.push !== l ? '' : r.push ? '<p class="hint">Judged over the whole branch, since its first commit that isn\'t pushed.</p>' : ''}
     ${l.files.length ? `<p class="hint">The review would look at: <code>${l.files.map(esc).join('</code> <code>')}</code></p>` : ''}
     ${!idle ? '<p class="warn-text">Claude is working in this session; a review can start once it is idle.</p>' : ''}
-    <div class="modal-actions">${r.open.length ? '<button type="button" class="btn" data-findings-btn style="margin-right:auto">Findings…</button>' : ''}<button type="button" class="btn" data-cancel>Close</button>
+    <div class="modal-actions">${r.allCount ? '<button type="button" class="btn" data-findings-btn style="margin-right:auto">Findings…</button>' : ''}<button type="button" class="btn" data-cancel>Close</button>
       <button type="button" class="btn" data-run="all" ${idle ? '' : 'disabled'} title="/code-review on everything that changed">Review everything</button>
       <button type="button" class="btn" data-run="fix" ${idle ? '' : 'disabled'} title="/code-review ${l.level} … --fix: review and fix what it finds">Review and fix</button>
       <button class="btn primary" ${idle ? '' : 'disabled'}>Run /code-review ${l.level}</button></div>`,
@@ -431,10 +432,13 @@ function reviewLightDialog(sid) {
 }
 
 // Confirmed polywatch findings with no outcome: for a session (s:id) or a workstream (w:id).
-function findingsDialog(target) {
+async function findingsDialog(target) {
   const [kind, id] = [target.slice(0, 1), target.slice(2)];
   const sessions = kind === 's' ? S.sessions.filter(x => x.id === id) : sessionsOf(id);
-  const rows = sessions.flatMap(s => (reviewOf(s.id)?.open || []).map(f => ({ ...f, sid: s.id, sname: s.name })));
+  const names = new Map(sessions.map(s => [s.id, s.name]));
+  let found = [];
+  try { found = await call('findingsFor', { sessionIds: sessions.map(s => s.id) }); } catch { return; }
+  const rows = found.map(f => ({ ...f, sname: names.get(f.sid) || '' }));
   const title = kind === 's' ? sessions[0]?.name : S.workstreams.find(w => w.id === id)?.name;
   const form = modal(`<h3>polywatch findings · ${esc(title || '')}</h3>
     <p class="hint">Confirmed by Opus against the code, with no outcome recorded. Mark each one: the outcome goes to polywatch, which uses it to rank and calibrate. A finding whose file the session changed afterwards may already be fixed.</p>
@@ -1617,12 +1621,13 @@ async function importDialog() {
   const p = await call('importPreview');
   if (!p) return;
   const form = modal(`<h3>Import polycli settings</h3>
-    <p class="hint">Exported ${esc(new Date(p.exportedAt).toLocaleString())}. Workstreams with the same name are updated; the others are added. ${p.pinnedShells ? `${p.pinnedShells} pinned shell${p.pinnedShells === 1 ? '' : 's'} will be created.` : ''} ${p.profiles.length ? `Profiles: ${p.profiles.map(esc).join(', ')}.` : ''}</p>
+    <p class="hint">Exported ${esc(new Date(p.exportedAt).toLocaleString())}. Workstreams with the same name are updated; the others are added. ${p.profiles.length ? `Profiles: ${p.profiles.map(esc).join(', ')}.` : ''}</p>
     <div class="imp-list">${p.workstreams.map(w => `<div class="imp-row" data-i="${w.index}">
       <label class="check-row"><input type="checkbox" data-take checked><span><b>${esc(w.name)}</b> <small>${w.action === 'add' ? 'new' : 'update'}</small></span></label>
       ${w.action === 'add' ? `<div class="row"><input data-folder value="${esc(w.folder)}" spellcheck="false" ${w.folderExists ? '' : 'class="warn-border"'}><button type="button" class="btn" data-browse-i style="flex:none">Browse…</button></div>${w.folderExists ? '' : '<small class="warn-text">This folder isn\'t on this PC: pick where the project is here.</small>'}` : ''}
       ${w.envNeeded.map(n => `<div class="row env-row"><code style="flex:none;min-width:160px">${esc(n)}</code><input type="password" data-env="${esc(n)}" placeholder="value (leave empty to add later)" autocomplete="off"></div>`).join('')}
     </div>`).join('')}</div>
+    ${p.pinnedShells.length ? `<div class="field"><span>Pinned shells it creates: each runs its command whenever polycli starts</span><table class="keys-table"><tbody>${p.pinnedShells.map(s => `<tr><td>${esc(s.workstream)} · ${esc(s.name)}</td><td><code>${esc(s.command)}</code></td></tr>`).join('')}</tbody></table><label class="check-row"><input type="checkbox" name="shells" checked><span>Create these pinned shells</span></label></div>` : ''}
     <div class="modal-actions"><button type="button" class="btn" data-cancel>Cancel</button><button class="btn primary">Import</button></div>`,
   async (_fd, f) => {
     const choices = {};
@@ -1633,7 +1638,7 @@ async function importDialog() {
       row.querySelectorAll('[data-env]').forEach(i => { if (i.value) c.env[i.dataset.env] = i.value; });
       choices[row.dataset.i] = c;
     }
-    const r = await call('importApply', { choices });
+    const r = await call('importApply', { choices, shells: !p.pinnedShells.length || _fd.get('shells') === 'on' });
     toast(`Imported: ${r.added.length} added, ${r.updated.length} updated${r.shells ? `, ${r.shells} shells` : ''}${r.errors.length ? `; ${r.errors.length} problem${r.errors.length === 1 ? '' : 's'}: ${r.errors[0]}` : ''}`, !!r.errors.length);
   }, { wide: true });
   form.querySelectorAll('[data-browse-i]').forEach(b => b.onclick = async () => { const input = b.parentElement.querySelector('[data-folder]'); const d = await call('pickFolder', { defaultPath: input.value || undefined }); if (d) input.value = d; });

@@ -23,13 +23,17 @@ function coverageGap(r) {
   }
   if (r.reviewer?.error) return { lines, why: 'reviewer failed' };
   const notes = (r.notes || []).join(' ');
-  if (/budget reached|not checked|daily cap|too large/i.test(notes)) return { lines, why: 'budget ran out' };
+  if (/daily cap|too large/i.test(notes)) return { lines, why: 'not reviewed (budget or size)' };
+  // A turn is as unchecked as the share of its serious claims nobody checked or settled:
+  // the budget running out after most claims were checked leaves little uncovered.
   const serious = [...(r.reviewer?.issues || []), ...(r.compare?.issues || [])].filter(i => /high|medium/i.test(i.severity || ''));
-  const checked = (r.adjudications || []).length;
-  const uncertain = (r.adjudications || []).filter(a => a.holds === 'uncertain' || a.holds === 'error').length;
-  if (uncertain) return { lines: Math.round(lines * Math.min(1, uncertain / Math.max(1, checked))), why: 'uncertain checks' };
-  if (serious.length > checked + 1) return { lines: Math.round(lines / 2), why: 'claims left unchecked' };
-  return null;
+  const adj = r.adjudications || [];
+  const settled = adj.filter(a => a.holds === 'yes' || a.holds === 'no').length;
+  const open = Math.max(0, serious.length - settled);
+  if (!open) return null;
+  const share = Math.min(1, open / Math.max(1, serious.length));
+  const why = adj.some(a => a.holds === 'uncertain' || a.holds === 'error') ? 'uncertain checks' : /budget reached|not checked/i.test(notes) ? 'budget ran out' : 'claims left unchecked';
+  return { lines: Math.round(lines * share), why };
 }
 
 // inputs:

@@ -17,15 +17,18 @@ test('a long session polywatch checked completely stays green', () => {
 test('turns skipped for nothing reviewable, or two lines, are not gaps', () => {
   assert.equal(coverageGap(turn({ skipped: 'no reviewable files (all excluded or outside the project)' })), null);
   assert.equal(coverageGap(turn({ skipped: 'only 2 changed lines' })), null);
-  assert.ok(coverageGap(turn({ notes: ['Per-turn budget reached; remaining claims were not checked.'] })));
+  const cut = { notes: ['Per-turn budget reached; remaining claims were not checked.'], reviewer: { issues: [{ severity: 'high' }, { severity: 'medium' }] }, adjudications: [{ holds: 'yes' }] };
+  assert.deepEqual(coverageGap(turn(cut)), { lines: 40, why: 'budget ran out' }, 'half the serious claims unchecked: half the lines');
+  assert.equal(coverageGap(turn({ ...cut, adjudications: [{ holds: 'yes' }, { holds: 'no' }] })), null, 'budget ran out after every serious claim was settled');
+  assert.equal(coverageGap(turn({ notes: ['Per-turn budget reached'] })), null, 'nothing serious was raised');
   assert.ok(coverageGap(turn({ reviewer: { error: 'timeout' } })));
 });
 
 test('a budget-cut hard turn on many lines: orange during work, red at push time', () => {
-  const reviews = [turn({ tier: 'HARD', files: ['src/sessions.js'], features: { changedLines: 380 }, notes: ['Per-turn budget reached; remaining claims were not checked.'] })];
+  const reviews = [turn({ tier: 'HARD', files: ['src/sessions.js'], features: { changedLines: 500 }, notes: ['Per-turn budget reached; remaining claims were not checked.'], reviewer: { issues: [{ severity: 'high' }, { severity: 'medium' }, { severity: 'medium' }, { severity: 'medium' }] }, adjudications: [{ holds: 'yes' }] })];
   const work = light({ reviews, recent: reviews });
   assert.equal(work.color, 'orange');
-  assert.match(work.reasons[0].text, /760 changed lines.*budget ran out.*sessions\.js/);
+  assert.match(work.reasons[0].text, /750 changed lines.*budget ran out.*sessions\.js/);
   assert.deepEqual(work.files, ['src/sessions.js']);
   assert.equal(light({ reviews, recent: reviews, push: true }).color, 'red');
 });
@@ -66,7 +69,7 @@ test('learning: less sensitive after quiet reviews, more after misses, within bo
 });
 
 test('learning never silences unchecked code at push time', () => {
-  const reviews = [turn({ features: { changedLines: 320 }, notes: ['Per-turn budget reached'] })];
+  const reviews = [turn({ features: { changedLines: 320 }, notes: ['Per-turn budget reached'], reviewer: { issues: [{ severity: 'high' }, { severity: 'medium' }] } })];
   assert.notEqual(light({ reviews, recent: reviews, push: true, factor: 2 }).color, 'green');
 });
 

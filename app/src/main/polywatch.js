@@ -16,6 +16,13 @@ const store = require('./store');
 const { light, learnedFactor, reviewFindingsFrom, posix } = require('./reviewlight');
 
 const REFRESH_MS = 30000;
+// Findings older than this no longer count as open: a finding nobody rated in two weeks is
+// history, and would otherwise keep a long-lived session red for good.
+const OPEN_WINDOW_MS = 14 * 864e5;
+// Which worktree a ledger review belongs to: its files carry ".claude/worktrees/<name>/"
+// when the session worked in one (none for the main checkout).
+const treeOfFile = f => (/^\.claude\/worktrees\/([^/]+)\//.exec(String(f || '').replace(/\\/g, '/')) || [])[1] || '';
+const treeOfDir = (root, dir) => (/^\.claude\/worktrees\/([^/]+)/.exec(path.relative(root, dir).replace(/\\/g, '/')) || [])[1] || '';
 const git = (cwd, args) => new Promise(resolve => execFile('git', ['--no-optional-locks', ...args], { cwd, env: cleanEnv({ GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' }), timeout: 8000, windowsHide: true, maxBuffer: 8 << 20 },
   (err, out) => resolve(err ? null : String(out))));
 
@@ -73,9 +80,10 @@ class Polywatch extends EventEmitter {
 
   // Confirmed findings without an outcome. A finding whose file a later turn of the same
   // session changed may have been fixed: it is kept, marked, and doesn't count as open.
-  findings(r, { sessionId = null } = {}) {
+  findings(r, { sessionId = null, filter = null } = {}) {
     const out = [];
-    const reviews = sessionId ? r.reviews.filter(x => x.session === sessionId) : r.reviews;
+    const since = Date.now() - OPEN_WINDOW_MS;
+    const reviews = r.reviews.filter(x => x.at >= since && (!sessionId || x.session === sessionId) && (!filter || filter(x)));
     for (const rv of reviews) {
       (rv.findings || []).forEach((f, i) => {
         if (f.status !== 'confirmed' || r.outcomes.has(`${rv.id}#${i + 1}`)) return;
@@ -93,8 +101,17 @@ class Polywatch extends EventEmitter {
 
   // The branch span for push time: since the oldest commit not on the upstream (or not on
   // the default branch when unpublished), with the lines changed since then.
+  // Cached until the branch's head, upstream or changes move (git runs are the slow part).
   async branchSpan(dir, g) {
     if (!g || g.detached) return null;
+    const key = `${dir}|${g.branch}|${g.upstream}|${g.ahead}|${g.behind}|${g.changed}|${g.untracked}`;
+    const hit = (this.spans ||= new Map()).get(dir);
+    if (hit && hit.key === key && Date.now() - hit.at < 10 * 60e3) return hit.span;
+    const span = await this.computeSpan(dir, g);
+    this.spans.set(dir, { key, at: Date.now(), span });
+    return span;
+  }
+  async computeSpan(dir, g) {
     let base = g.upstream || null;
     if (!base) for (const b of ['origin/HEAD', 'origin/main', 'origin/master', 'main', 'master']) if (await git(dir, ['rev-parse', '--verify', '-q', b])) { base = b; break; }
     if (!base) return null;
@@ -107,13 +124,38 @@ class Polywatch extends EventEmitter {
   }
 
   async refreshAll() {
-    const sessions = this.manager.state.sessions.filter(s => s.open && s.state !== 'closed');
-    let changed = false;
-    for (const s of sessions) {
+    if (this.refreshing) { this.again = true; return; }
+    this.refreshing = true;
+    try {
+      const sessions = this.manager.state.sessions.filter(s => s.open && s.state !== 'closed');
+      // Sessions in parallel; ledgers are read once per repository first.
+      const roots = await Promise.all(sessions.map(s => this.repoRoot(s.liveCwd || s.cwd)));
+      for (const root of new Set(roots.filter(Boolean))) await this.repo(root);
+      const results = await Promise.all(sessions.map((s, i) => this.lightFor(s, roots[i]).catch(() => null)));
+      let changed = false;
+      sessions.forEach((s, i) => {
+        const next = results[i];
+        if (!next) { if (this.lights.delete(s.id)) changed = true; return; }
+        const before = JSON.stringify(this.lights.get(s.id) || null);
+        this.lights.set(s.id, next);
+        if (JSON.stringify(next) !== before) changed = true;
+      });
+      for (const id of [...this.lights.keys()]) if (!sessions.some(s => s.id === id)) { this.lights.delete(id); changed = true; }
+      if (changed) this.emit('changed');
+    } finally {
+      this.refreshing = false;
+      if (this.again) { this.again = false; this.soon(); }
+    }
+  }
+
+  // One session's lights, from the ledger refreshAll has just read (never read here: two
+  // sessions of one repository reading it at once would add its new lines twice).
+  async lightFor(s, root) {
+    {
       const dir = s.liveCwd || s.cwd;
-      const root = await this.repoRoot(dir);
-      if (!root) { if (this.lights.delete(s.id)) changed = true; continue; }
-      const r = await this.repo(root);
+      if (!root) return null;
+      const r = this.repos.get(normPath(root));
+      if (!r) return null;
       const proj = this.project(root);
       // Since the session's last /code-review, and at most the last week (a session never
       // reviewed would otherwise carry its whole history).
@@ -127,17 +169,16 @@ class Polywatch extends EventEmitter {
       let push = null;
       const span = await this.branchSpan(dir, g);
       if (span) {
-        const branch = r.reviews.filter(x => x.at >= span.since);
-        const openAll = this.findings(r).filter(f => !f.possiblyFixed && f.at >= span.since);
+        // The branch's own work: turns in this checkout (the same worktree, or the main
+        // one), by any session, since the branch's first commit that isn't pushed.
+        const tree = treeOfDir(root, dir);
+        const here = x => (x.files || []).some(f => treeOfFile(f) === tree);
+        const branch = r.reviews.filter(x => x.at >= span.since && here(x));
+        const openAll = this.findings(r, { filter: here }).filter(f => !f.possiblyFixed && f.at >= span.since);
         push = light({ reviews: branch, open: openAll, recent, gitLines: span.lines, polywatch: r.has, push: true, factor: proj.factor });
       }
-      const next = { work, push, open: this.findings(r, { sessionId: s.sessionId }), polywatch: r.has, root };
-      const before = JSON.stringify(this.lights.get(s.id) || null);
-      this.lights.set(s.id, next);
-      if (JSON.stringify(next) !== before) changed = true;
+      return { work, push, open: this.findings(r, { sessionId: s.sessionId }), polywatch: r.has, root };
     }
-    for (const id of [...this.lights.keys()]) if (!sessions.some(s => s.id === id)) { this.lights.delete(id); changed = true; }
-    if (changed) this.emit('changed');
   }
 
   async diffLines(dir) {
@@ -199,10 +240,16 @@ class Polywatch extends EventEmitter {
   // Snapshot for the window: per session its lights and findings; per project its learning.
   view() {
     const sessions = {};
-    for (const [id, l] of this.lights) sessions[id] = { work: l.work, push: l.push, open: l.open.slice(0, 50), openCount: l.open.filter(f => !f.possiblyFixed).length, maxSeverity: maxSev(l.open.filter(f => !f.possiblyFixed)), polywatch: l.polywatch, root: l.root };
+    // Counts only: the findings themselves (with their evidence) are fetched when the panel opens.
+    for (const [id, l] of this.lights) sessions[id] = { work: l.work, push: l.push, openCount: l.open.filter(f => !f.possiblyFixed).length, allCount: l.open.length, maxSeverity: maxSev(l.open.filter(f => !f.possiblyFixed)), polywatch: l.polywatch, root: l.root };
     const projects = {};
     for (const [k, p] of Object.entries(this.state.projects)) projects[k] = { reviews: p.history.length, newFindings: p.history.filter(h => h.newFound > 0).length, factor: learnedFactor(p.history) };
     return { sessions, projects };
+  }
+
+  // The findings panel: these sessions' unrated findings, newest first.
+  openFor(sessionIds) {
+    return sessionIds.flatMap(id => (this.lights.get(id)?.open || []).map(f => ({ ...f, sid: id }))).sort((a, b) => b.at - a.at).slice(0, 200);
   }
 
   // Real or false alarm, through polywatch's own command, found where the plugin is

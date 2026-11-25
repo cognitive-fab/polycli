@@ -788,7 +788,16 @@ async function runPolywatch({ app, win, manager }) {
     await app.polycliPolywatch.outcome({ root: pw().root, review: 'smoke-r1', n: 1, verdict: 'real', note: 'smoke test' });
     await waitFor(() => pw()?.openCount === 0, 20000, 'outcome recorded and read back');
     report.after = { open: pw().openCount, light: pw().work.color };
-    report.ok = report.before.open === 1 && report.before.light === 'red' && report.badge === '1' && /Review before/.test(report.lightShown || '') && report.after.open === 0;
+    // The learning loop: a /code-review sent by polycli is recorded as a prompt (the work
+    // span starts again from it), and its result is read and counted for the project.
+    fs.writeFileSync(path.join(repo, 'state.js'), 'let s = 0;\nmodule.exports = () => { s = s + 1; return s - 1 + 1 };\n');
+    const pkey = require('./paths').normPath(pw().root);
+    const before = app.polycliPolywatch.view().projects[pkey]?.reviews || 0;
+    await manager.submitPrompt(sid, '/code-review low');
+    await waitFor(() => app.polycliPolywatch.lastReviewAt(S()) > 0, 30000, '/code-review recorded as a prompt');
+    await waitFor(() => (app.polycliPolywatch.view().projects[pkey]?.reviews || 0) > before, 300000, 'the review result read and learned from');
+    report.learned = app.polycliPolywatch.view().projects[pkey];
+    report.ok = report.before.open === 1 && report.before.light === 'red' && report.badge === '1' && /Review before/.test(report.lightShown || '') && report.after.open === 0 && report.learned?.reviews === before + 1;
   } catch (e) {
     report.ok = false;
     report.error = String(e.stack || e);

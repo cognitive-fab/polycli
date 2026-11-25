@@ -9,6 +9,8 @@ What it does, in short:
 - **One, two or four panes**; a bar at the bottom lists what needs you, and ✋ marks a session asking you a question.
 - Per workstream: a **Board** (Kanban, each card with its own Claude chat that writes specs), **Architecture** diagrams (archlens), **Docs** (Markdown preview and edit), **Tests** (run test and check scripts, see the numbers) and **Artifacts** (claude.ai artifacts, documents and Cowork reports, opened inside polycli).
 - Git line with Commit / Push / Deploy, time and tokens per workstream, selections that scroll Claude's transcript.
+- Per workstream: **plugins, skills, MCP servers and permission profiles** for its Claude sessions; a **context meter** with **Compact** and **Hand off** to a new session; **polywatch findings** and a **code-review light** that asks for `/code-review` only where polywatch can't cover the code; a **Worktrees** view that cleans up merged worktrees safely.
+- A **command palette** (Ctrl+K, Win+Alt+C from anywhere), **auto-update** from GitHub Releases, and settings **export / import** for a second PC.
 
 What changed in each version: [`CHANGELOG.md`](CHANGELOG.md).
 

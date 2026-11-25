@@ -46,14 +46,15 @@ function preview(manager, j) {
       const have = new Set((existing?.env || []).map(e => e.name.toUpperCase()));
       return { index: i, name: String(w.name || ''), folder: String(w.folder || ''), folderExists: !!w.folder && fs.existsSync(w.folder), action: existing ? 'update' : 'add', envNeeded: (w.envNames || []).filter(n => !have.has(String(n).toUpperCase())) };
     }),
-    pinnedShells: (j.pinnedShells || []).length,
+    // Shown in full: each runs its command whenever polycli starts.
+    pinnedShells: (j.pinnedShells || []).slice(0, 100).map(p => ({ workstream: String(p.workstream || ''), name: String(p.name || ''), command: String(p.pin?.command || '').slice(0, 300) })),
     profiles: (j.profiles || []).map(p => p.name),
   };
 }
 
 // choices: { [index]: { skip, folder, env: { NAME: value } } }. Returns a summary.
 // Every field goes through the app's own checks (createWorkstream, updateWorkstream…).
-async function applyImport(manager, j, choices = {}, { setBillable = () => {} } = {}) {
+async function applyImport(manager, j, choices = {}, { setBillable = () => {}, shells = true } = {}) {
   const done = { added: [], updated: [], skipped: [], shells: 0, profiles: 0, errors: [] };
   if (Array.isArray(j.profiles) && j.profiles.length) {
     const byId = new Map(manager.state.profiles.map(p => [p.id, p]));
@@ -86,7 +87,7 @@ async function applyImport(manager, j, choices = {}, { setBillable = () => {} } 
   }
   // Pinned shells: created, pinned, and started by their own rules; a dependency is found by name.
   const created = new Map();
-  for (const p of (j.pinnedShells || []).slice(0, 100)) {
+  for (const p of (shells ? j.pinnedShells || [] : []).slice(0, 100)) {
     const wsId = idByName.get(String(p.workstream || '').toLowerCase());
     if (!wsId) continue;
     try {
