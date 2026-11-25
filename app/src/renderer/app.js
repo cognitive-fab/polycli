@@ -186,10 +186,18 @@ function renderCowork() {
   const onMain = !['board', 'architecture', 'docs', 'tests', 'artifacts', 'worktrees'].includes(S.ui.view);   // as render() decides
   const onScreen = new Set(onMain && liveWorkstreams().length ? slotPlan().map(p => p.tab).filter(Boolean) : []);
   const waiting = S.sessions.filter(s => (s.open || s.termLive) && (s.state === 'needs-you' || s.asking) && !onScreen.has(`s:${s.id}`));
-  if (!cw.pendingLinks.length && !cw.approvals.length && !waiting.length) { bar.hidden = true; bar.innerHTML = ''; placeToast(); return; }
+  // An update downloaded and ready (updater.js), until dismissed for this version.
+  const upd = S.update?.state === 'ready' && S.update.next !== updateDismissed ? S.update : null;
+  if (!cw.pendingLinks.length && !cw.approvals.length && !waiting.length && !upd) { bar.hidden = true; bar.innerHTML = ''; placeToast(); return; }
   // Don't redraw while the user is choosing in a select or editing.
   if (bar.contains(document.activeElement) && document.activeElement.matches('select, textarea')) return;
   const rows = [];
+  if (upd) {
+    const pinned = S.shells.filter(h => h.pin?.command && h.state === 'running').length;
+    rows.push(`<div class="cw-row"><span class="cw-tag">Update</span>
+      <span class="grow"><b>polycli ${esc(upd.next)}</b> is ready. Restarting keeps your Claude sessions running; shells end${pinned ? `, and ${pinned} pinned shell${pinned === 1 ? '' : 's'} start${pinned === 1 ? 's' : ''} its command again` : ''}: a command running in a shell stops.</span>
+      ${upd.notes ? '<button class="btn" data-upd="notes">What\'s new</button>' : ''}<button class="btn" data-upd="later" title="It installs when you quit polycli">Update when I quit</button><button class="btn primary" data-upd="now">Restart now</button></div>`);
+  }
   for (const s of waiting.slice(0, 4)) {
     const w = S.workstreams.find(x => x.id === s.workstreamId);
     const what = s.asking ? `is asking you${s.asking.question ? `: ${esc(s.asking.question)}` : ' a question'}` : `needs you${s.attention?.message ? `: ${esc(s.attention.message)}` : ''}`;
@@ -373,6 +381,8 @@ function gitLine(s) {
   acts.push('<button class="chip icon" data-act="git-refresh" title="Refresh git and pull request info">↻</button>');
   return `<div class="l4">${parts.join('<span class="sep">·</span>')}${reviewLight(s)}<span class="git-acts">${acts.join('')}</span></div>`;
 }
+
+let updateDismissed = null;   // the version whose "ready" line the user put off until quit
 
 // ---------------- polywatch findings and the code-review light ----------------
 const SEVR = { high: 3, medium: 2, low: 1 };
@@ -1601,6 +1611,34 @@ function markdown(src) {
   flush();
   return out.join('\n');
 }
+// Import: what the file holds, a folder for a workstream whose folder isn't on this PC,
+// and the values of the variables it names (they never travel in the file).
+async function importDialog() {
+  const p = await call('importPreview');
+  if (!p) return;
+  const form = modal(`<h3>Import polycli settings</h3>
+    <p class="hint">Exported ${esc(new Date(p.exportedAt).toLocaleString())}. Workstreams with the same name are updated; the others are added. ${p.pinnedShells ? `${p.pinnedShells} pinned shell${p.pinnedShells === 1 ? '' : 's'} will be created.` : ''} ${p.profiles.length ? `Profiles: ${p.profiles.map(esc).join(', ')}.` : ''}</p>
+    <div class="imp-list">${p.workstreams.map(w => `<div class="imp-row" data-i="${w.index}">
+      <label class="check-row"><input type="checkbox" data-take checked><span><b>${esc(w.name)}</b> <small>${w.action === 'add' ? 'new' : 'update'}</small></span></label>
+      ${w.action === 'add' ? `<div class="row"><input data-folder value="${esc(w.folder)}" spellcheck="false" ${w.folderExists ? '' : 'class="warn-border"'}><button type="button" class="btn" data-browse-i style="flex:none">Browse…</button></div>${w.folderExists ? '' : '<small class="warn-text">This folder isn\'t on this PC: pick where the project is here.</small>'}` : ''}
+      ${w.envNeeded.map(n => `<div class="row env-row"><code style="flex:none;min-width:160px">${esc(n)}</code><input type="password" data-env="${esc(n)}" placeholder="value (leave empty to add later)" autocomplete="off"></div>`).join('')}
+    </div>`).join('')}</div>
+    <div class="modal-actions"><button type="button" class="btn" data-cancel>Cancel</button><button class="btn primary">Import</button></div>`,
+  async (_fd, f) => {
+    const choices = {};
+    for (const row of f.querySelectorAll('.imp-row')) {
+      const c = { skip: !row.querySelector('[data-take]').checked, env: {} };
+      const fo = row.querySelector('[data-folder]');
+      if (fo) c.folder = fo.value.trim();
+      row.querySelectorAll('[data-env]').forEach(i => { if (i.value) c.env[i.dataset.env] = i.value; });
+      choices[row.dataset.i] = c;
+    }
+    const r = await call('importApply', { choices });
+    toast(`Imported: ${r.added.length} added, ${r.updated.length} updated${r.shells ? `, ${r.shells} shells` : ''}${r.errors.length ? `; ${r.errors.length} problem${r.errors.length === 1 ? '' : 's'}: ${r.errors[0]}` : ''}`, !!r.errors.length);
+  }, { wide: true });
+  form.querySelectorAll('[data-browse-i]').forEach(b => b.onclick = async () => { const input = b.parentElement.querySelector('[data-folder]'); const d = await call('pickFolder', { defaultPath: input.value || undefined }); if (d) input.value = d; });
+}
+
 async function appSettingsDialog() {
   const li = await call('loginItem');
   const hk = await call('hotkey').catch(() => ({ hotkey: '', saved: '' }));
@@ -1608,6 +1646,13 @@ async function appSettingsDialog() {
     <label class="check-row"><input type="checkbox" name="login" ${li.on ? 'checked' : ''}><span>Start polycli when I sign in to Windows</span></label>
     <p class="hint">${li.packaged ? '' : 'polycli runs from source here, so Windows starts Electron with this app folder; Startup apps in Windows Settings lists it as Electron. '}Claude sessions that were open are reattached when it starts; after a restart of Windows they start again with their conversation.</p>
     <label class="check-row"><input type="checkbox" name="cwAuto" ${S.cowork?.auto ? 'checked' : ''}><span>Accept Cowork requests automatically: a link to a workstream the task names, and every prompt (one starting with /, !, # or @ still asks). Otherwise each request opens a dialog.</span></label>
+    <div class="field"><span>Updates</span>${(() => {
+      const u = S.update || {};
+      if (u.state === 'source') return '<span class="hint">polycli runs from source here; an installed polycli updates itself from GitHub Releases.</span>';
+      const st = { checking: 'checking…', downloading: `downloading ${esc(u.next || '')}${u.percent ? ` (${u.percent}%)` : ''}`, ready: `${esc(u.next)} is ready: it installs when you restart or quit`, error: `<span class="warn-text">${esc(u.error || 'could not check')}</span>`, idle: u.checkedAt ? `up to date (${esc(u.version)})` : esc(u.version || '') }[u.state] || '';
+      return `<label class="check-row"><input type="checkbox" name="updates" ${S.ui.updates !== false ? 'checked' : ''}><span>Check for updates at start and every six hours</span></label><div class="row"><span class="hint grow">polycli ${esc(u.version || '')}: ${st}</span><button type="button" class="btn" id="checkUpd" style="flex:none">Check now</button></div>`;
+    })()}</div>
+    <div class="field"><span>Move to another PC</span><div class="row"><span class="hint grow">Workstreams, their Claude settings and the names of their variables (never the values), pinned shells, profiles and these settings, in one file.</span><button type="button" class="btn" id="exportSet" style="flex:none">Export…</button><button type="button" class="btn" id="importSet" style="flex:none">Import…</button></div></div>
     <label class="field"><span>Global hotkey: brings polycli to the front with the command palette open (empty: none). In the window, Ctrl+K or Ctrl+Shift+P opens the palette.</span><input name="hotkey" value="${esc(hk.saved)}" placeholder="Super+Alt+C" spellcheck="false">${hk.saved && !hk.hotkey ? '<span class="warn-text">Windows didn\'t give polycli this key: another app may use it.</span>' : ''}</label>
     <div class="field"><span>Permission profiles</span><div class="row"><span class="hint grow">${(S.profiles || []).map(p => esc(p.name)).join(', ')}: guardrails each workstream picks in its ⚙ Settings.</span><button type="button" class="btn" id="editProfiles" style="flex:none">Edit profiles…</button></div></div>
     <div class="field"><span>Code review: what the light has learned per project from your /code-review runs</span>${(() => {
@@ -1621,10 +1666,14 @@ async function appSettingsDialog() {
     if (on !== li.on) { const r = await call('setLoginItem', { on }); toast(r.on ? 'polycli will start when you sign in' : 'polycli will no longer start when you sign in'); }
     const auto = fd.get('cwAuto') === 'on';
     if (auto !== !!S.cowork?.auto) { await call('coworkAuto', { on: auto }); toast(auto ? 'Cowork requests are now accepted automatically' : 'Cowork requests ask again'); }
+    if (S.update?.state !== 'source' && (fd.get('updates') === 'on') !== (S.ui.updates !== false)) await call('setUpdates', { on: fd.get('updates') === 'on' });
     const key = String(fd.get('hotkey') || '').trim();
     if (key !== (hk.saved || '')) { await api.call('setHotkey', { hotkey: key }); toast(key ? `Global hotkey: ${key}` : 'Global hotkey off'); }
   });
   form.querySelector('#editProfiles').onclick = () => profilesDialog(settingsHelpers());
+  form.querySelector('#checkUpd')?.addEventListener('click', async e => { e.target.disabled = true; await call('checkForUpdates').catch(() => {}); e.target.disabled = false; });
+  form.querySelector('#exportSet').onclick = async () => { const f = await call('exportSettings'); if (f) toast(`Exported to ${f}`); };
+  form.querySelector('#importSet').onclick = () => importDialog();
   form.querySelectorAll('[data-reset-root]').forEach(b => b.onclick = async () => { await call('resetReviewLearning', { root: b.dataset.resetRoot }); b.closest('tr').querySelector('td:nth-child(3)').textContent = 'reset'; b.remove(); });
   return form;
 }
@@ -1649,6 +1698,13 @@ document.addEventListener('click', async e => {
   if (cwEl) return coworkClick(cwEl);
   const promptEl = e.target.closest('[data-prompt]');
   if (promptEl) return promptClick(promptEl);
+  const updEl = e.target.closest('[data-upd]');
+  if (updEl) {
+    const k = updEl.dataset.upd;
+    if (k === 'now') return call('installUpdate');
+    if (k === 'later') { updateDismissed = S.update?.next; toast('polycli updates when you quit it'); return render(); }
+    if (k === 'notes') return modal(`<h3>What's new in polycli ${esc(S.update?.next || '')}</h3><pre class="upd-notes">${esc(S.update?.notes || '')}</pre><div class="modal-actions"><button type="button" class="btn" data-cancel hidden></button><button class="btn primary">Close</button></div>`, async () => {}, { wide: true });
+  }
   const findEl = e.target.closest('[data-findings]');
   if (findEl) { e.stopPropagation(); return findingsDialog(findEl.dataset.findings); }
   const el = e.target.closest('[data-close],[data-tab],[data-select-ws],[data-act],[data-reopen],[data-closed],[data-archived-toggle],[data-restore-ws]');

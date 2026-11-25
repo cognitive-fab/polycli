@@ -200,6 +200,12 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .inbox.usage { cursor: default; font-variant-numeric: tabular-nums; }
 .inbox.usage.amber { color: var(--needs, #f2b84b); }
 .inbox.usage.red { color: var(--bad, #f06a6a); }
+/* Import dialog, update notes. */
+.imp-list { display: flex; flex-direction: column; gap: 10px; max-height: 55vh; overflow-y: auto; margin-bottom: 10px; }
+.imp-row { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+.imp-row input:not([type=checkbox]) { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font: inherit; }
+.imp-row .warn-border { border-color: var(--needs); }
+.upd-notes { white-space: pre-wrap; font-family: inherit; font-size: 13px; line-height: 1.5; max-height: 60vh; overflow-y: auto; }
 /* Command palette. */
 .palette-back { position: fixed; inset: 0; z-index: 60; background: #0006; display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; }
 .palette { width: 640px; max-width: calc(100vw - 32px); background: var(--bg-elev); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 20px 60px #000a; overflow: hidden; display: flex; flex-direction: column; }

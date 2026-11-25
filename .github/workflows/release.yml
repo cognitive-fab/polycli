@@ -1,0 +1,45 @@
+# Builds the Windows installer and zip on GitHub's own Windows runner when a version tag
+# (v0.4.0, …) is pushed, checks them (npm run dist ends with dist-check), and uploads them
+# with latest.yml to a DRAFT release: nothing reaches users until the release is published
+# on GitHub. Free on a public repository; uses only the repository's own GITHUB_TOKEN.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      - run: npm test
+      # Builds, then starts the packaged app and checks it (icon, version, window, shell).
+      - run: npm run dist
+      - name: Upload to a draft release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          files=$(ls dist/*.exe dist/*.zip dist/*.blockmap dist/latest.yml)
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" $files --clobber
+          else
+            gh release create "$tag" $files --draft --title "polycli ${tag#v}" --notes "See CHANGELOG.md for what changed. Unsigned: SmartScreen may warn on first install (More info → Run anyway)."
+          fi

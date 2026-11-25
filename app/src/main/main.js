@@ -38,6 +38,8 @@ let board = null;
 let tests = null;
 let artifacts = null;
 let polywatch = null;
+let updater = null;
+let pendingImport = null;   // the export file chosen in importPreview, until importApply
 
 function createWindow() {
   win = new BrowserWindow({
@@ -87,7 +89,7 @@ function snapshot() {
     const found = [...arts.filter(a => a.workstreamId === w.id), ...snap.sessions.filter(s => s.workstreamId === w.id).flatMap(s => [...(s.links || []), ...(s.documents || [])])];
     return { ...w, artifactsRev: `${found.length}:${Math.max(0, ...found.map(x => x.at || 0))}` };
   });
-  return { ...snap, review: polywatch ? polywatch.view() : null, cowork: cowork ? cowork.snapshot() : null, billing: billing ? billing.summary() : null, noRemoteGlobal: require('./sessions').globalNoRemote() };
+  return { ...snap, update: updater ? updater.status : null, review: polywatch ? polywatch.view() : null, cowork: cowork ? cowork.snapshot() : null, billing: billing ? billing.summary() : null, noRemoteGlobal: require('./sessions').globalNoRemote() };
 }
 
 function pushState() {
@@ -197,6 +199,31 @@ const OPS = {
     return manager.submitPrompt(s.id, ['/code-review', level, ...files, a.fix ? '--fix' : ''].filter(Boolean).join(' '));
   },
   resetReviewLearning: a => polywatch.resetLearning(String(a.root)),
+  // Settings export and import, and updates (docs/design/v0.4.md §10).
+  exportSettings: async () => {
+    const io = require('./settingsio');
+    const r = await dialog.showSaveDialog(win, { title: 'Export polycli settings', defaultPath: `polycli-settings-${new Date().toISOString().slice(0, 10)}.polycli.json`, filters: [{ name: 'polycli settings', extensions: ['json'] }] });
+    if (r.canceled || !r.filePath) return null;
+    require('fs').writeFileSync(r.filePath, JSON.stringify(io.exportSettings(manager, { isBillable: id => billing.isBillable(id) }), null, 2));
+    return r.filePath;
+  },
+  importPreview: async () => {
+    const io = require('./settingsio');
+    const r = await dialog.showOpenDialog(win, { title: 'Import polycli settings', properties: ['openFile'], filters: [{ name: 'polycli settings', extensions: ['json'] }] });
+    if (r.canceled || !r.filePaths[0]) return null;
+    pendingImport = io.readExport(r.filePaths[0]);
+    return io.preview(manager, pendingImport);
+  },
+  importApply: async a => {
+    if (!pendingImport) throw new Error('Choose the file to import again');
+    const out = await require('./settingsio').applyImport(manager, pendingImport, a.choices || {}, { setBillable: (w, on) => billing.setBillable(w, on) });
+    pendingImport = null;
+    return out;
+  },
+  updateStatus: () => updater.status,
+  checkForUpdates: () => updater.check(true),
+  installUpdate: () => updater.installNow(),
+  setUpdates: a => { manager.state.ui.updates = !!a.on; manager.changed(); return { on: !!a.on }; },
   hotkey: () => ({ hotkey: hotkey || '', saved: manager.state.ui.hotkey ?? DEFAULT_HOTKEY, default: DEFAULT_HOTKEY }),
   setHotkey: a => {
     const accel = String(a.hotkey ?? '').trim();
@@ -415,6 +442,8 @@ app.whenReady().then(() => {
   polywatch = new (require('./polywatch').Polywatch)(manager);
   polywatch.on('changed', pushState);
   app.polycliPolywatch = polywatch;   // for the smoke tests
+  updater = new (require('./updater').Updater)(app, { enabled: () => manager.state.ui.updates !== false && !process.env.POLYCLI_SMOKE });
+  updater.on('changed', pushState);
   installArtifactProtocol(protocol, artifacts);
   // The artifact viewer's pages may copy to the clipboard and go full screen; any other
   // permission (camera, location, notifications…) is refused.
@@ -472,7 +501,7 @@ app.whenReady().then(() => {
   win.on('focus', () => win.flashFrame(false));
   app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
   if (!process.env.POLYCLI_SMOKE) registerHotkey(manager.state.ui.hotkey ?? DEFAULT_HOTKEY);
-  app.on('before-quit', () => { try { require('electron').globalShortcut.unregisterAll(); } catch {} polywatch.dispose(); board.dispose(); tests.dispose(); billing.stop(); cowork.dispose(); bridge.stop(); manager.dispose(); hooks.stop(); pty.dispose(); store.flush(); });
+  app.on('before-quit', () => { try { require('electron').globalShortcut.unregisterAll(); } catch {} updater?.dispose(); polywatch.dispose(); board.dispose(); tests.dispose(); billing.stop(); cowork.dispose(); bridge.stop(); manager.dispose(); hooks.stop(); pty.dispose(); store.flush(); });
 });
 
 app.on('window-all-closed', () => app.quit());

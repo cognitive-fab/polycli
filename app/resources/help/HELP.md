@@ -78,6 +78,34 @@ While it waits, the shell says what it is waiting for. polycli gives up after 15
 
 **+ Mistral** opens Mistral Vibe (the `vibe` command) in a new tab in the workstream folder, with the workstream's environment variables. Sign in or paste your key the first time Vibe asks, or set `MISTRAL_API_KEY` in the workstream's settings. When you quit Vibe the tab stays on a shell; restarting polycli starts Vibe again.
 
+## Context and plan usage
+
+The session header shows how full Claude's context is ("62% of 200k"): amber past 70%, red past 85%. The top bar shows your plan's usage (last 5 hours and this week, with when each resets) as Claude Code reports it.
+
+When a session's context is almost full, a line above it offers:
+
+- **Compact**: types `/compact`; Claude replaces the conversation with a summary and continues in the same session.
+- **Hand off…**: Claude writes a hand-off note for a new session (the goal, what is done, decisions, next steps, files that matter). You read it and can edit it; **Start new session** starts "‹role› 2" in the same folder with the same model and effort, gives it the note, and closes this session (its conversation stays under Closed). Notes are kept in the project's `.polycli/handoff`.
+
+Both are also in the command palette (Ctrl+K).
+
+## Code review and polywatch
+
+If polywatch reviews your sessions, polycli shows what it found and when a `/code-review` is worth running.
+
+- **Findings**: a small number next to a session and its workstream counts the confirmed findings with no outcome yet (red if one is high severity). Click it to read each one with Opus's evidence and mark it **Real** or **False alarm**; polycli records that through polywatch, which uses it to rank and calibrate.
+- **The code-review light**, next to the git line: **No review needed**, **Review advised** or **Review before you push**. polywatch already checks every turn, so the light doesn't count changed lines. It lights for what a per-turn review can't settle: turns polywatch skipped or only half checked (its budget ran out, a check came back uncertain), the same risky file changed across several turns or by parallel sessions, confirmed findings still open, and areas where polywatch keeps finding defects. During work it goes no higher than orange (except for an open high finding); at push time it judges the whole branch. Hover it for the reasons; click it to run `/code-review` on just the files behind them, or **Review and fix**.
+- **Push** asks once when the light is red. Nothing is blocked.
+- **It learns per project**: after each `/code-review`, polycli compares what the review found with what polywatch had. Reviews that find nothing new make the light speak up less; reviews that find what polywatch missed make it speak up earlier. Within limits: an open high finding is always red, and unchecked code at push time is always at least orange. ⚙ shows and resets what it learned.
+
+## Worktrees
+
+**Worktrees** (above the tabs) lists the git worktrees of the workstream's repository: the branch, whether it is merged (into the default branch, or by its pull request on GitHub), changes, and whether a session uses it or Claude Code left a lock on it. **VS Code** and **Shell** open one; **Remove** takes away a worktree's folder, and **Clean up merged** removes every merged one that is free. A worktree with changes, used by a session, or locked by a running process is never removed, and a branch is deleted only when its work is merged.
+
+## Command palette
+
+**Ctrl+K** (outside a terminal, where Ctrl+K belongs to the shell) or **Ctrl+Shift+P** anywhere opens the palette: type to jump to a workstream, session, shell or view, or to run a command (new session, restart, compact, hand off, code review, commit, push, settings…). Start with **?** to search the prompts you sent, artifacts and board cards in every workstream. The global hotkey **Win+Alt+C** (change it in ⚙) brings polycli to the front with the palette open, from anywhere in Windows.
+
 ## Two or four panes
 
 The buttons at the right of the Main / Board / … bar show one pane (▢), two side by side (◫) or four (⊞) in the center. Each pane has its own tabs and shows one workstream. The selected pane has a blue border: the rail and the tabs act on it, so to put a workstream in a pane, click the pane and then the workstream in the rail. A session or shell is shown in one pane at a time; picking the same workstream in two panes shows two different sessions or shells of it, and a pane says so when there is nothing left to show (start another session or shell there). polycli remembers the panes.
@@ -200,6 +228,10 @@ Run **polycli-Setup-‹version›.exe**. It asks who to install for: **Only for 
 The installer isn't signed yet, so Windows SmartScreen may say "Windows protected your PC": click **More info**, then **Run anyway**. The zip (**polycli-‹version›-win-x64.zip**) is the same app without installing: unzip it anywhere and run `polycli.exe`.
 
 polycli needs **Claude Code** (`claude`) and **Node.js 18 or newer** (`node`) on PATH; it says at startup if one is missing.
+
+An installed polycli **updates itself** from GitHub Releases: it checks at start and every six hours, downloads in the background, and a line at the bottom says when a new version is ready: **Restart now**, or **Update when I quit**. Claude sessions keep running through the restart; shells end (a command running in one stops) and pinned shells start their command again. ⚙ turns the checks off or checks now.
+
+**Moving to another PC**: ⚙ → **Export…** saves your workstreams, their Claude settings, the names of their variables (never the values), pinned shells, permission profiles and polycli's settings in one file. **Import…** on the other PC shows what it holds, asks where each project is when its folder isn't there, and asks for the variables' values.
 
 ## Start with Windows
 
