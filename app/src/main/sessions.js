@@ -29,6 +29,10 @@ const NO_REMOTE_VARS = /^(ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|ANTHROPIC_BASE_
 const PERMISSION_MODES =['', 'default', 'acceptEdits', 'plan'];
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const ENV_MAX = 50;
+// The note comes back as the answer itself, not as a file Claude writes: no tool, so no
+// permission prompt, and nothing for the session to decide about where to write it.
+const HANDOFF_START = '<<<HANDOFF', HANDOFF_END = 'HANDOFF>>>';
+const HANDOFF_PROMPT = `Write a hand-off note for a new Claude session that will continue this work. Cover: the goal; what is done; the decisions made and why; what is in progress; the next steps; the files, commands and branches that matter; and anything you were told to avoid or to be careful with. Write it for a reader who has none of this conversation. Reply with the note only, in Markdown, between a line ${HANDOFF_START} and a line ${HANDOFF_END}. Don't use any tool, and don't continue the work.`;
 const SKILL_LEVELS = ['off', 'name-only', 'user-invocable-only'];
 const PLUGIN_ID = /^[\w.@+-]{1,120}$/;
 const SKILL_NAME = /^[\w.:+-]{1,120}$/;
@@ -172,6 +176,7 @@ class Manager extends EventEmitter {
       shells: this.state.shells.map(h => ({ ...h, termLive: this.pty.isLive(`h:${h.id}`), cwdShort: tildify(h.cwd) })),
       ui: this.state.ui,
       plan: this.plan,
+      planUsage: this.planUsage || null,
       profiles: this.state.profiles,
     };
   }
@@ -373,7 +378,7 @@ class Manager extends EventEmitter {
   setUi(patch) {
     for (const k of ['activeTab', 'collapsed']) if (k in patch) this.state.ui[k] = patch[k];
     if ('theme' in patch && ['system', 'light', 'dark'].includes(patch.theme)) this.state.ui.theme = patch.theme;
-    if ('view' in patch && ['main', 'board', 'architecture', 'docs', 'tests', 'artifacts'].includes(patch.view)) this.state.ui.view = patch.view;
+    if ('view' in patch && ['main', 'board', 'architecture', 'docs', 'tests', 'artifacts', 'worktrees'].includes(patch.view)) this.state.ui.view = patch.view;
     if ('remoteDefault' in patch) this.state.ui.remoteDefault = !!patch.remoteDefault;
     // Split view: 1, 2 or 4 panes, each showing a workstream and one of its tabs.
     if (patch.split && typeof patch.split === 'object') {
@@ -487,6 +492,81 @@ class Manager extends EventEmitter {
     this.ops.set(s.id, true);
     s.opAt = now();
     try { return await fn(); } finally { this.ops.delete(s.id); s.opAt = now(); this.changed(); }
+  }
+
+  // ---------- context: compact and hand off (docs/design/v0.4.md §4) ----------
+  compactSession(id) {
+    const s = this.session(id);
+    if (s.state !== 'idle') throw new Error('Wait until Claude is idle in this session');
+    return this.submitPrompt(id, '/compact');
+  }
+
+  // The session writes a hand-off note for a new session as its answer; polycli saves it
+  // to the folder's .polycli/handoff. Resolves with the note once the session has
+  // stopped (the user reads and may edit it before startHandoff).
+  async handOff(id) {
+    const s = this.session(id);
+    if (s.state !== 'idle' || !this.pty.isLive(`s:${s.id}`)) throw new Error('Wait until Claude is idle in this session');
+    if (s.handingOff) throw new Error('A hand-off note is already being written');
+    s.handingOff = { since: now() };
+    this.changed();
+    try {
+      const t0 = now();
+      await this.submitPrompt(s.id, HANDOFF_PROMPT);
+      const sleep = ms => new Promise(r => setTimeout(r, ms));
+      let text = null;
+      while (now() - t0 < 15 * 60000 && text === null) {
+        await sleep(1000);
+        if (['closed', 'failed'].includes(s.state)) break;
+        if (s.state !== 'idle' || (s.stateSince || 0) <= t0) continue;
+        const last = s.transcriptPath && transcriptTail(s.transcriptPath);
+        const answer = (last?.message?.content || []).map(c => (c.type === 'text' ? c.text : '')).join('\n');
+        const m = new RegExp(`${HANDOFF_START}\\s*\\n([\\s\\S]*?)\\n\\s*${HANDOFF_END}`).exec(answer);
+        text = m ? m[1].trim() : answer.trim() || null;
+      }
+      if (!text) throw new Error('The session did not answer with a hand-off note');
+      const dir = path.join(s.liveCwd || s.cwd, '.polycli', 'handoff');
+      fs.mkdirSync(dir, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 13);
+      const file = path.join(dir, `${s.role.replace(/[^\w-]+/g, '-').slice(0, 40) || 'session'}-${stamp}.md`);
+      fs.writeFileSync(file, `# Hand-off from ${s.name}\n\n${text}\n`);
+      return { path: file, text: fs.readFileSync(file, 'utf8') };
+    } finally {
+      s.handingOff = null;
+      this.changed();
+    }
+  }
+
+  // A new session in the same folder, model, effort and mode continues from the note
+  // (edited text saved first); the old one is closed, its conversation kept.
+  async startHandoff({ id, path: file, text }) {
+    const s = this.session(id);
+    const dir = path.join(s.liveCwd || s.cwd, '.polycli', 'handoff');
+    const full = path.resolve(String(file || ''));
+    if (path.dirname(full).toLowerCase() !== path.resolve(dir).toLowerCase() || !fs.existsSync(full)) throw new Error('Not this session\'s hand-off note');
+    if (typeof text === 'string') {
+      if (text.length > 200000) throw new Error('The note is too long');
+      fs.writeFileSync(full, text);
+    }
+    const m = /^(.*?)(?:\s+(\d+))?$/.exec(s.role);
+    const taken = new Set(this.state.sessions.filter(x => x.workstreamId === s.workstreamId).map(x => x.role));
+    let n = m[2] ? +m[2] + 1 : 2, role;
+    do { role = `${m[1]} ${n++}`.slice(0, 60); } while (taken.has(role));
+    const next = await this.newSession({ workstreamId: s.workstreamId, role, cwd: s.liveCwd || s.cwd, model: s.model || '', effort: s.effort || '', permissionMode: s.permissionMode || '', remote: !!s.remote });
+    next.handoffFrom = { id: s.id, name: s.name, note: full };
+    this.changed();
+    (async () => {
+      const sleep = ms => new Promise(r => setTimeout(r, ms));
+      const t0 = now();
+      while (now() - t0 < 120000 && !(next.state === 'idle' && this.pty.isLive(`s:${next.id}`))) await sleep(500);
+      if (next.state !== 'idle') return this.set(next, { error: 'The new session did not start; the hand-off note is at ' + full });
+      // The note goes in the prompt itself (no file to read, so no permission prompt), after
+      // a typed line that says what it is: Claude treats a long paste as data otherwise.
+      const note = fs.readFileSync(full, 'utf8');
+      await this.pasteAndSubmit(next, [`Continue the work described in the hand-off note below, written for you by the previous session on this work ("${s.name}"; saved at ${full.replace(/\\/g, '/')}). Start by saying in two lines what you understand the next step to be.`, note]);
+      await this.closeSession(s.id);
+    })().catch(e => this.set(next, { error: clip(String(e.message || e), 300) }));
+    return next.id;
   }
 
   closeSession(id) {
@@ -762,12 +842,33 @@ class Manager extends EventEmitter {
     // Before the state changes below: the bridge settles its turn on Stop first.
     this.emit('session-hook', s, event, input);
     switch (event) {
-      case 'statusLine':
+      case 'statusLine': {
         Object.assign(s.header, {
           version: input.version || s.header.version,
           model: input.model?.display_name || s.header.model,
         });
+        // How full the context is (null before the first answer and right after /compact),
+        // and the plan's usage windows, which are the same for every session.
+        const cw = input.context_window;
+        if (cw && typeof cw === 'object') {
+          const pct = Number.isFinite(cw.used_percentage) ? cw.used_percentage : null;
+          s.context = { pct, size: Number.isFinite(cw.context_window_size) ? cw.context_window_size : null, at: now() };
+        }
+        const rl = input.rate_limits;
+        if (rl && typeof rl === 'object') {
+          const win = w => (w && Number.isFinite(w.used_percentage) ? { pct: w.used_percentage, resetsAt: Number.isFinite(w.resets_at) ? w.resets_at * 1000 : null } : null);
+          this.planUsage = { fiveHour: win(rl.five_hour), sevenDay: win(rl.seven_day), at: now() };
+        }
         if (s.state === 'starting' || s.state === 'detached') return this.set(s, { state: 'idle' });
+        return this.changed();
+      }
+      // /compact, typed or automatic: the meter waits for the next status line.
+      case 'PreCompact':
+        s.compacting = { since: now(), trigger: input.trigger || null };
+        return this.changed();
+      case 'PostCompact':
+        s.compacting = null;
+        if (s.context) s.context.pct = null;
         return this.changed();
       case 'SessionStart':
         // /clear empties the transcript on screen: earlier prompts can't be scrolled to.
@@ -777,7 +878,7 @@ class Manager extends EventEmitter {
       case 'UserPromptSubmit':
         this.blockedPolls.delete(s.id);
         s.promptSeq = (s.promptSeq || 0) + 1;
-        if (typeof input.prompt === 'string' && input.prompt.trim()) this.recordPrompt(s, { text: input.prompt });
+        if (typeof input.prompt === 'string' && input.prompt.trim()) { this.recordPrompt(s, { text: input.prompt }); this.emit('prompt', s, input.prompt); }
         return this.set(s, { state: 'busy', attention: null, asking: null, lastPrompt: clip(input.prompt, 300) });
       case 'Stop':
         this.gitSoon(s);

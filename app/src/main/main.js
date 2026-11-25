@@ -37,6 +37,7 @@ let billing = null;
 let board = null;
 let tests = null;
 let artifacts = null;
+let polywatch = null;
 
 function createWindow() {
   win = new BrowserWindow({
@@ -86,7 +87,7 @@ function snapshot() {
     const found = [...arts.filter(a => a.workstreamId === w.id), ...snap.sessions.filter(s => s.workstreamId === w.id).flatMap(s => [...(s.links || []), ...(s.documents || [])])];
     return { ...w, artifactsRev: `${found.length}:${Math.max(0, ...found.map(x => x.at || 0))}` };
   });
-  return { ...snap, cowork: cowork ? cowork.snapshot() : null, billing: billing ? billing.summary() : null, noRemoteGlobal: require('./sessions').globalNoRemote() };
+  return { ...snap, review: polywatch ? polywatch.view() : null, cowork: cowork ? cowork.snapshot() : null, billing: billing ? billing.summary() : null, noRemoteGlobal: require('./sessions').globalNoRemote() };
 }
 
 function pushState() {
@@ -185,6 +186,63 @@ const OPS = {
   removeProjectRule: a => require('./claudeconfig').removeProjectRule(manager.ws(a.workstreamId).folder, String(a.key)),
   setProfiles: a => manager.setProfiles(a.profiles),
   restartWorkstreamSessions: a => manager.restartWorkstreamSessions(a.workstreamId),
+  // polywatch findings and the code-review light (docs/design/v0.4.md §6).
+  findingOutcome: a => polywatch.outcome({ root: polywatch.view().sessions[a.sessionId]?.root, review: a.review, n: a.n, verdict: a.verdict, note: a.note }),
+  runCodeReview: a => {
+    const s = manager.session(a.id);
+    const l = polywatch.view().sessions[s.id];
+    const pick = l?.push && l.push.color !== 'green' ? l.push : l?.work;
+    const level = ['low', 'medium', 'high', 'xhigh', 'max'].includes(a.level) ? a.level : pick?.level || 'medium';
+    const files = (a.allFiles ? [] : (pick?.files || [])).filter(f => /^[\w./@+-]+$/.test(f)).slice(0, 10);
+    return manager.submitPrompt(s.id, ['/code-review', level, ...files, a.fix ? '--fix' : ''].filter(Boolean).join(' '));
+  },
+  resetReviewLearning: a => polywatch.resetLearning(String(a.root)),
+  hotkey: () => ({ hotkey: hotkey || '', saved: manager.state.ui.hotkey ?? DEFAULT_HOTKEY, default: DEFAULT_HOTKEY }),
+  setHotkey: a => {
+    const accel = String(a.hotkey ?? '').trim();
+    if (accel && !/^((Ctrl|Control|Alt|Shift|Super|Meta|CommandOrControl)\+){1,3}[A-Za-z0-9]$|^((Ctrl|Alt|Shift|Super)\+){1,3}(F\d{1,2}|Space)$/.test(accel)) throw new Error('Use modifiers and one key, like Super+Alt+C or Ctrl+Alt+Space');
+    const r = registerHotkey(accel);
+    if (!r.ok) { registerHotkey(manager.state.ui.hotkey ?? DEFAULT_HOTKEY); throw new Error(`Windows didn't give polycli ${accel}: another app may use it`); }
+    manager.state.ui.hotkey = accel;
+    manager.changed();
+    return r;
+  },
+  // Command palette search (docs/design/v0.4.md §9): prompts sent to sessions, artifacts
+  // and board cards, in every workstream that isn't archived.
+  search: async a => {
+    const q = String(a.q || '').trim().toLowerCase();
+    if (q.length < 2) return [];
+    const out = [];
+    const live = manager.state.workstreams.filter(w => !w.archived);
+    const snip = t => { const s = String(t).replace(/\s+/g, ' '); const i = s.toLowerCase().indexOf(q); return (i > 40 ? '…' + s.slice(i - 30) : s).slice(0, 140); };
+    for (const s of manager.state.sessions) {
+      const w = live.find(x => x.id === s.workstreamId);
+      if (!w) continue;
+      for (const p of manager.prompts(s.id).reverse()) {
+        if (typeof p.text === 'string' && p.text.toLowerCase().includes(q)) out.push({ type: 'prompt', kind: 'prompt', label: snip(p.text), sub: `${s.name} · ${new Date(p.at).toLocaleDateString()}`, workstreamId: w.id, sessionId: s.id, at: p.at });
+      }
+    }
+    for (const w of live) {
+      try { for (const it of (await artifacts.list(w.id)).items) if (`${it.title} ${it.description || ''} ${it.path || ''}`.toLowerCase().includes(q)) out.push({ type: 'artifact', kind: 'artifact', label: it.title, sub: `${w.name} · ${it.kind}`, workstreamId: w.id, artifactId: it.id, at: it.at || 0 }); } catch {}
+      try { for (const c of board.load(w.id).cards) if (`${c.title} ${c.notes || ''}`.toLowerCase().includes(q)) out.push({ type: 'card', kind: 'card', label: c.title, sub: `${w.name} · ${c.column}`, workstreamId: w.id, at: c.updatedAt || 0 }); } catch {}
+    }
+    return out.sort((x, y) => (y.at || 0) - (x.at || 0)).slice(0, 50);
+  },
+  // Worktrees view (docs/design/v0.4.md §7). Paths are always checked against the list.
+  worktreeList: a => require('./worktrees').list(manager.ws(a.workstreamId).folder, { sessionsIn }),
+  worktreeRemove: a => require('./worktrees').remove(manager.ws(a.workstreamId).folder, String(a.path), { sessionsIn }),
+  worktreeCleanup: a => require('./worktrees').cleanUpMerged(manager.ws(a.workstreamId).folder, { sessionsIn }),
+  worktreeOpen: async a => {
+    const w = manager.ws(a.workstreamId);
+    const { rows } = await require('./worktrees').list(w.folder);
+    const row = rows.find(r => r.exists && require('./paths').normPath(r.path) === require('./paths').normPath(String(a.path)));
+    if (!row) throw new Error('That worktree is no longer listed');
+    if (a.how === 'shell') return manager.newShell({ workstreamId: w.id, cwd: row.path, name: row.name }).id;
+    return vscode.open(row.path, { mode: 'reuse' });
+  },
+  compactSession: a => manager.compactSession(a.id),
+  handOff: a => manager.handOff(a.id),
+  startHandoff: a => manager.startHandoff({ id: a.id, path: a.path, text: a.text }),
   archiveWorkstream: a => manager.archiveWorkstream({ id: a.id }),
   restoreWorkstream: a => manager.restoreWorkstream({ id: a.id }),
   globalKeys: () => require('./env').globalKeys(),
@@ -301,6 +359,35 @@ async function checkRequirements() {
   }
 }
 
+// The global hotkey (DESIGN.md §9): brings polycli to the front with the palette open,
+// from anywhere in Windows. '' turns it off. Returns whether Windows gave it to us
+// (another app may hold the same keys).
+const DEFAULT_HOTKEY = 'Super+Alt+C';
+let hotkey = null;
+function registerHotkey(accel) {
+  const { globalShortcut } = require('electron');
+  if (hotkey) { try { globalShortcut.unregister(hotkey); } catch {} hotkey = null; }
+  if (!accel) return { ok: true, hotkey: '' };
+  let ok = false;
+  try {
+    ok = globalShortcut.register(accel, () => {
+      if (!win || win.isDestroyed()) return;
+      if (win.isMinimized()) win.restore();
+      win.show(); win.focus();
+      send('palette');
+    });
+  } catch { ok = false; }
+  if (ok) hotkey = accel;
+  return { ok, hotkey: ok ? accel : '' };
+}
+
+// The polycli sessions working in a folder or below it (a worktree in use).
+function sessionsIn(dir) {
+  const { normPath } = require('./paths');
+  const base = normPath(dir);
+  return manager.state.sessions.filter(s => s.open && s.state !== 'closed').filter(s => { const p = normPath(s.liveCwd || s.cwd); return p === base || p.startsWith(base + '/'); }).map(s => s.name);
+}
+
 function wireIpc() {
   ipcMain.handle('polycli', async (_e, op, args) => {
     const fn = OPS[op];
@@ -325,6 +412,9 @@ app.whenReady().then(() => {
   manager.on('changed', pushState);
   cowork = new Cowork(manager);
   artifacts = new Artifacts(manager, cowork);
+  polywatch = new (require('./polywatch').Polywatch)(manager);
+  polywatch.on('changed', pushState);
+  app.polycliPolywatch = polywatch;   // for the smoke tests
   installArtifactProtocol(protocol, artifacts);
   // The artifact viewer's pages may copy to the clipboard and go full screen; any other
   // permission (camera, location, notifications…) is refused.
@@ -381,7 +471,8 @@ app.whenReady().then(() => {
 
   win.on('focus', () => win.flashFrame(false));
   app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
-  app.on('before-quit', () => { board.dispose(); tests.dispose(); billing.stop(); cowork.dispose(); bridge.stop(); manager.dispose(); hooks.stop(); pty.dispose(); store.flush(); });
+  if (!process.env.POLYCLI_SMOKE) registerHotkey(manager.state.ui.hotkey ?? DEFAULT_HOTKEY);
+  app.on('before-quit', () => { try { require('electron').globalShortcut.unregisterAll(); } catch {} polywatch.dispose(); board.dispose(); tests.dispose(); billing.stop(); cowork.dispose(); bridge.stop(); manager.dispose(); hooks.stop(); pty.dispose(); store.flush(); });
 });
 
 app.on('window-all-closed', () => app.quit());

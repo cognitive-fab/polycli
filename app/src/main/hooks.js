@@ -8,7 +8,7 @@ const path = require('path');
 const { EventEmitter } = require('events');
 const { paths, pipePath } = require('./paths');
 
-const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'Stop', 'Notification', 'SessionEnd', 'PostToolUse', 'PreToolUse'];
+const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'Stop', 'Notification', 'SessionEnd', 'PostToolUse', 'PreToolUse', 'PreCompact', 'PostCompact'];
 
 // Scripts inside an asar can't be run by the system node, and settings files need a
 // stable path, so the helpers live in %APPDATA%\polycli\bin.

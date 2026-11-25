@@ -702,8 +702,108 @@ async function runSettings({ app, manager }) {
   app.exit(report.ok ? 0 : 1);
 }
 
+// Context meter and hand-off (docs/design/v0.4.md §4): the status line fills the meter,
+// /compact typed by polycli runs (PreCompact/PostCompact), and a hand-off writes a note
+// and starts the next session from it while closing this one.
+async function runHandoff({ app, manager }) {
+  const report = { phase: 'handoff' };
+  const ids = [];
+  try {
+    const ws = manager.createWorkstream({ name: 'handoff-test', folder: FOLDER });
+    const s = await manager.newSession({ workstreamId: ws.id, role: 'work', model: 'haiku' });
+    ids.push(s.id);
+    const S = () => manager.session(s.id);
+    await waitFor(() => S().state === 'idle' && manager.pty.isLive(`s:${s.id}`), 60000, 'idle');
+    await manager.submitPrompt(s.id, 'Remember the code word PELICAN-42. Reply with exactly OK.');
+    await waitFor(() => S().state === 'idle' && S().context?.pct != null, 90000, 'context in the status line');
+    report.context = { ...S().context };
+    report.planUsage = manager.planUsage || null;
+    await manager.compactSession(s.id);
+    await waitFor(() => S().compacting, 30000, 'PreCompact').then(() => { report.compactStarted = true; }).catch(() => { report.compactStarted = false; });
+    await waitFor(() => !S().compacting && S().state === 'idle', 180000, 'PostCompact');
+    const note = await manager.handOff(s.id);
+    report.note = { path: note.path, length: note.text.length, mentionsCodeWord: /PELICAN-42/.test(note.text) };
+    const nextId = await manager.startHandoff({ id: s.id, path: note.path, text: note.text });
+    ids.push(nextId);
+    const N = () => manager.session(nextId);
+    await waitFor(() => S().state === 'closed', 180000, 'old session closed');
+    // Continuing the work may well ask for a permission first (needs-you): that counts.
+    await waitFor(() => N().promptSeq >= 1 && ((N().state === 'idle' && N().lastMessage) || N().state === 'needs-you'), 180000, 'new session started on the note');
+    report.next = { role: N().role, from: N().handoffFrom?.name, state: N().state, answer: N().lastMessage, asks: N().attention?.message };
+    report.ok = !!(report.context?.pct != null && report.note.length > 100 && report.next.from && S().state === 'closed');
+  } catch (e) {
+    report.ok = false;
+    report.error = String(e.stack || e);
+  }
+  for (const id of ids) { try { await manager.deleteSession(id); } catch {} }
+  fs.writeFileSync(path.join(OUT, 'handoff.json'), JSON.stringify(report, null, 2));
+  console.log('SMOKE handoff', JSON.stringify(report));
+  app.exit(report.ok ? 0 : 1);
+}
+
+// polywatch findings and the code-review light (docs/design/v0.4.md §6), on a scratch
+// repository inside the smoke folder with a ledger polycli reads: a confirmed high
+// finding for the session lights the badge and turns the light red; recording it as real
+// through polywatch's own command clears both.
+async function runPolywatch({ app, win, manager }) {
+  const report = { phase: 'polywatch' };
+  let sid = null;
+  const repo = path.join(FOLDER, `pw-smoke-${Date.now()}`);   // a fresh one: an old run's may still be held open
+  try {
+    fs.mkdirSync(path.join(repo, '.polywatch'), { recursive: true });
+    const { execFileSync } = require('child_process');
+    const g = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'ignore' });
+    g('init', '-q'); g('config', 'user.email', 'smoke@example.com'); g('config', 'user.name', 'smoke');
+    fs.writeFileSync(path.join(repo, 'state.js'), 'let s = 0;\nmodule.exports = () => ++s;\n');
+    g('add', '.'); g('commit', '-qm', 'init');
+    const ws = manager.createWorkstream({ name: 'polywatch-test', folder: repo });
+    const s = await manager.newSession({ workstreamId: ws.id, role: 'pw', model: 'haiku' });
+    sid = s.id;
+    const S = () => manager.session(sid);
+    // A new repository is a new project for Claude: answer its trust prompt (Yes), then
+    // /exit, after which polycli starts the session (as a user would).
+    await waitFor(() => S().state === 'untrusted' || S().state === 'idle', 60000, 'trust prompt or idle');
+    if (S().state === 'untrusted') {
+      await waitFor(() => manager.pty.isLive(`t:${sid}`), 20000, 'trust pane');
+      await sleep(4000);
+      manager.pty.write(`t:${sid}`, '\x1b[B'); await sleep(500); manager.pty.write(`t:${sid}`, '\r');
+      await sleep(6000);
+      manager.pty.write(`t:${sid}`, '/exit'); await sleep(500); manager.pty.write(`t:${sid}`, '\r');
+    }
+    await waitFor(() => S().state === 'idle' && manager.pty.isLive(`s:${sid}`), 90000, 'idle');
+    if (!S().sessionId) { await manager.submitPrompt(sid, 'Reply with exactly OK.'); }
+    await waitFor(() => S().sessionId && S().state === 'idle', 60000, 'a session id');
+    const review = { kind: 'review', id: 'smoke-r1', session: S().sessionId, createdAt: new Date().toISOString(), tier: 'HARD', files: ['state.js'],
+      features: { changedLines: 40, stateHits: 2 }, notes: [], reviewer: { issues: [] }, adjudications: [{ holds: 'yes' }],
+      findings: [{ file: 'state.js', where: 'module.exports', severity: 'high', claim: 'The counter is shared by every caller (smoke test finding).', status: 'confirmed', evidence: 'smoke' }] };
+    fs.appendFileSync(path.join(repo, '.polywatch', 'ledger.jsonl'), JSON.stringify(review) + '\n');
+    const pw = () => app.polycliPolywatch.view().sessions[sid];
+    await waitFor(() => pw()?.openCount === 1, 20000, 'finding read from the ledger');
+    report.before = { open: pw().openCount, light: pw().work.color, reasons: pw().work.reasons.map(r => r.text) };
+    manager.setUi({ activeTab: `s:${sid}` });
+    await sleep(1500);
+    report.badge = await win.webContents.executeJavaScript(`document.querySelector('[data-findings="s:${sid}"]')?.textContent || null`);
+    report.lightShown = await win.webContents.executeJavaScript(`document.querySelector('.rv-light')?.textContent || null`);
+    try { fs.writeFileSync(path.join(OUT, 'polywatch.png'), (await win.webContents.capturePage()).toPNG()); } catch {}
+    await app.polycliPolywatch.outcome({ root: pw().root, review: 'smoke-r1', n: 1, verdict: 'real', note: 'smoke test' });
+    await waitFor(() => pw()?.openCount === 0, 20000, 'outcome recorded and read back');
+    report.after = { open: pw().openCount, light: pw().work.color };
+    report.ok = report.before.open === 1 && report.before.light === 'red' && report.badge === '1' && /Review before/.test(report.lightShown || '') && report.after.open === 0;
+  } catch (e) {
+    report.ok = false;
+    report.error = String(e.stack || e);
+  }
+  if (sid) { try { await manager.deleteSession(sid); } catch {} }
+  try { fs.rmSync(repo, { recursive: true, force: true }); } catch {}
+  fs.writeFileSync(path.join(OUT, 'polywatch.json'), JSON.stringify(report, null, 2));
+  console.log('SMOKE polywatch', JSON.stringify(report));
+  app.exit(report.ok ? 0 : 1);
+}
+
 async function run(ctx) {
   fs.mkdirSync(OUT, { recursive: true });
+  if (process.env.POLYCLI_SMOKE === 'polywatch') return runPolywatch(ctx);
+  if (process.env.POLYCLI_SMOKE === 'handoff') return runHandoff(ctx);
   if (process.env.POLYCLI_SMOKE === 'settings') return runSettings(ctx);
   if (process.env.POLYCLI_SMOKE === 'packaged') return runPackaged(ctx);
   if (process.env.POLYCLI_SMOKE === 'bridge') return runBridge(ctx);

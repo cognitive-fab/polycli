@@ -3,6 +3,8 @@ import { Terminal } from '../../node_modules/@xterm/xterm/lib/xterm.mjs';
 import { FitAddon } from '../../node_modules/@xterm/addon-fit/lib/addon-fit.mjs';
 import { showProject, hideProject, isDirty, renderMarkdown } from './views.js';
 import { wsSettingsDialog as openWsSettings, profilesDialog } from './settings.js';
+import { openPalette } from './palette.js';
+import { selectArtifact } from './artifactsview.js';
 
 const api = window.polycli;
 const $ = sel => document.querySelector(sel);
@@ -92,6 +94,7 @@ function render() {
   const ws = activeWs();
   $('#topTitle').textContent = ws ? `${ws.name} · ${ws.folderShort || ws.folder}` : '';
   renderBilling();
+  renderUsage();
   renderInbox();
   renderCowork();
   coworkRequestDialog();
@@ -99,7 +102,7 @@ function render() {
   renderTabs();
   renderPanes();
   const none = !liveWorkstreams().length;
-  const view = ws && ['board', 'architecture', 'docs', 'tests', 'artifacts'].includes(S.ui.view) ? S.ui.view : 'main';
+  const view = ws && ['board', 'architecture', 'docs', 'tests', 'artifacts', 'worktrees'].includes(S.ui.view) ? S.ui.view : 'main';
   $('#viewbar').hidden = !ws;
   for (const b of document.querySelectorAll('#viewbar [data-view]')) b.classList.toggle('active', b.dataset.view === view);
   $('#empty').hidden = !none;
@@ -180,7 +183,7 @@ function renderCowork() {
   const bar = $('#coworkStrip');
   // Sessions waiting on you: a permission prompt or a question (✋). Those on screen in a
   // pane are left out: their own pane shows it.
-  const onMain = !['board', 'architecture', 'docs', 'tests', 'artifacts'].includes(S.ui.view);   // as render() decides
+  const onMain = !['board', 'architecture', 'docs', 'tests', 'artifacts', 'worktrees'].includes(S.ui.view);   // as render() decides
   const onScreen = new Set(onMain && liveWorkstreams().length ? slotPlan().map(p => p.tab).filter(Boolean) : []);
   const waiting = S.sessions.filter(s => (s.open || s.termLive) && (s.state === 'needs-you' || s.asking) && !onScreen.has(`s:${s.id}`));
   if (!cw.pendingLinks.length && !cw.approvals.length && !waiting.length) { bar.hidden = true; bar.innerHTML = ''; placeToast(); return; }
@@ -302,7 +305,7 @@ function renderRail() {
       const closed = sessionsOf(w.id).filter(s => !isOpenSession(s));
       const sel = S.ui.activeTab;
       body = `<div class="ws-body">
-        ${open.map(s => `<button class="item st-${s.state} ${sel === `s:${s.id}` || sel === `t:${s.id}` ? 'sel' : ''}" data-tab="s:${s.id}" title="${esc(STATE_LABEL[s.state] || s.state)}">${s.asking ? hand(s) : '<span class="dot"></span>'}<span class="label">${esc(s.role)}</span><span class="kind">claude</span></button>`).join('')}
+        ${open.map(s => `<button class="item st-${s.state} ${sel === `s:${s.id}` || sel === `t:${s.id}` ? 'sel' : ''}" data-tab="s:${s.id}" title="${esc(STATE_LABEL[s.state] || s.state)}">${s.asking ? hand(s) : '<span class="dot"></span>'}<span class="label">${esc(s.role)}</span>${findingsBadge([s.id], `s:${s.id}`)}<span class="kind">claude</span></button>`).join('')}
         ${shellsOf(w.id).map(h => `<button class="item ${h.state === 'running' ? 'st-idle' : 'st-closed'} ${sel === `h:${h.id}` ? 'sel' : ''}" data-tab="h:${h.id}"><span class="dot"></span><span class="label">${esc(h.name)}</span><span class="kind">${h.kind === 'wsl' ? 'wsl' : h.kind === 'ssh' ? 'ssh' : 'shell'}</span></button>`).join('')}
         ${closed.length ? `<button class="item closed-toggle" data-closed="${w.id}">${showClosed.has(w.id) ? '▾' : '▸'} Closed (${closed.length})</button>` : ''}
         ${showClosed.has(w.id) ? closed.map(s => `<button class="item st-${s.state}" data-reopen="${s.id}" title="Reopen"><span class="dot"></span><span class="label">${esc(s.role)}</span><span class="kind">${s.state === 'failed' ? 'failed' : 'reopen'}</span></button>`).join('') : ''}
@@ -317,7 +320,7 @@ function renderRail() {
       </div>`;
     }
     return `<div class="ws ${active ? 'active' : ''}" data-ws="${w.id}">
-      <button class="ws-row st-${st}" data-select-ws="${w.id}"><span class="ws-color" style="background:${esc(w.color)}"></span><span class="ws-name">${esc(w.name)}</span>${wsAsking(w.id) ? hand(wsAsking(w.id)) : '<span class="dot"></span>'}</button>
+      <button class="ws-row st-${st}" data-select-ws="${w.id}"><span class="ws-color" style="background:${esc(w.color)}"></span><span class="ws-name">${esc(w.name)}</span>${findingsBadge(sessionsOf(w.id).map(s => s.id), `w:${w.id}`)}${reviewDot(w.id)}${wsAsking(w.id) ? hand(wsAsking(w.id)) : '<span class="dot"></span>'}</button>
       ${body}
     </div>`;
   }).join('');
@@ -368,7 +371,108 @@ function gitLine(s) {
   if (g.branch && (!g.upstream || g.ahead)) acts.push(`<button class="chip" data-act="git-push"${wait}>${g.upstream ? 'Push' : 'Publish'}</button>`);
   if (s.deploy) acts.push(`<button class="chip" data-act="deploy" title="${esc(s.deploy.command)}">Deploy</button>`);
   acts.push('<button class="chip icon" data-act="git-refresh" title="Refresh git and pull request info">↻</button>');
-  return `<div class="l4">${parts.join('<span class="sep">·</span>')}<span class="git-acts">${acts.join('')}</span></div>`;
+  return `<div class="l4">${parts.join('<span class="sep">·</span>')}${reviewLight(s)}<span class="git-acts">${acts.join('')}</span></div>`;
+}
+
+// ---------------- polywatch findings and the code-review light ----------------
+const SEVR = { high: 3, medium: 2, low: 1 };
+const reviewOf = id => S.review?.sessions?.[id] || null;
+// The number of confirmed findings still open for these sessions, colored by the worst.
+function findingsBadge(ids, target) {
+  const open = ids.map(reviewOf).filter(Boolean).flatMap(r => r.open.filter(f => !f.possiblyFixed));
+  if (!open.length) return '';
+  const worst = open.reduce((m, f) => (SEVR[f.severity] > SEVR[m] ? f.severity : m), 'low');
+  return `<span class="pw-badge sev-${worst}" data-findings="${target}" title="${open.length} confirmed polywatch finding${open.length === 1 ? '' : 's'} with no outcome yet; click to review">${open.length}</span>`;
+}
+// A workstream's light: the worst of its sessions'.
+function reviewDot(wsId) {
+  const colors = sessionsOf(wsId).map(s => reviewOf(s.id)).filter(Boolean).map(r => (r.push && r.push.color !== 'green' ? r.push : r.work)?.color);
+  const worst = colors.includes('red') ? 'red' : colors.includes('orange') ? 'orange' : null;
+  return worst ? `<span class="rv-dot rv-${worst}" title="A session here ${worst === 'red' ? 'should be reviewed before you push' : 'could use a /code-review'}"></span>` : '';
+}
+const LIGHT_WORD = { green: 'No review needed', orange: 'Review advised', red: 'Review before you push' };
+function reviewLight(s) {
+  const r = reviewOf(s.id);
+  if (!r || s.state === 'closed') return '';
+  const l = r.push && r.push.color !== 'green' ? r.push : r.work;
+  if (!l) return '';
+  const why = l.reasons.map(x => `• ${x.text}`).join('\n') || (r.polywatch ? 'polywatch has checked what changed since the last /code-review.' : 'Little has changed since the last /code-review.');
+  return `<button class="rv-light rv-${l.color}" data-act="review-light" title="${esc(why)}"><span class="rv-dot rv-${l.color}"></span>${LIGHT_WORD[l.color]}</button>`;
+}
+
+function reviewLightDialog(sid) {
+  const s = S.sessions.find(x => x.id === sid);
+  const r = reviewOf(sid);
+  if (!s || !r) return;
+  const l = r.push && r.push.color !== 'green' ? r.push : r.work;
+  const idle = s.state === 'idle' && s.termLive;
+  const form = modal(`<h3><span class="rv-dot rv-${l.color}"></span> ${LIGHT_WORD[l.color]} · ${esc(s.name)}</h3>
+    ${l.reasons.length ? `<ul class="rv-reasons">${l.reasons.map(x => `<li>${esc(x.text)}</li>`).join('')}</ul>` : `<p class="hint">${r.polywatch ? 'polywatch has checked what changed since the last /code-review, and no finding is open.' : 'Little has changed since the last /code-review.'}</p>`}
+    ${r.push && r.push !== l ? '' : r.push ? '<p class="hint">Judged over the whole branch, since its first commit that isn\'t pushed.</p>' : ''}
+    ${l.files.length ? `<p class="hint">The review would look at: <code>${l.files.map(esc).join('</code> <code>')}</code></p>` : ''}
+    ${!idle ? '<p class="warn-text">Claude is working in this session; a review can start once it is idle.</p>' : ''}
+    <div class="modal-actions">${r.open.length ? '<button type="button" class="btn" data-findings-btn style="margin-right:auto">Findings…</button>' : ''}<button type="button" class="btn" data-cancel>Close</button>
+      <button type="button" class="btn" data-run="all" ${idle ? '' : 'disabled'} title="/code-review on everything that changed">Review everything</button>
+      <button type="button" class="btn" data-run="fix" ${idle ? '' : 'disabled'} title="/code-review ${l.level} … --fix: review and fix what it finds">Review and fix</button>
+      <button class="btn primary" ${idle ? '' : 'disabled'}>Run /code-review ${l.level}</button></div>`,
+  async () => { await call('runCodeReview', { id: sid }); toast('/code-review started'); });
+  form.querySelectorAll('[data-run]').forEach(b => b.onclick = async () => { $('#modalBack').hidden = true; await call('runCodeReview', { id: sid, fix: b.dataset.run === 'fix', allFiles: b.dataset.run === 'all' }); toast('/code-review started'); });
+  form.querySelector('[data-findings-btn]')?.addEventListener('click', () => findingsDialog(`s:${sid}`));
+}
+
+// Confirmed polywatch findings with no outcome: for a session (s:id) or a workstream (w:id).
+function findingsDialog(target) {
+  const [kind, id] = [target.slice(0, 1), target.slice(2)];
+  const sessions = kind === 's' ? S.sessions.filter(x => x.id === id) : sessionsOf(id);
+  const rows = sessions.flatMap(s => (reviewOf(s.id)?.open || []).map(f => ({ ...f, sid: s.id, sname: s.name })));
+  const title = kind === 's' ? sessions[0]?.name : S.workstreams.find(w => w.id === id)?.name;
+  const form = modal(`<h3>polywatch findings · ${esc(title || '')}</h3>
+    <p class="hint">Confirmed by Opus against the code, with no outcome recorded. Mark each one: the outcome goes to polywatch, which uses it to rank and calibrate. A finding whose file the session changed afterwards may already be fixed.</p>
+    <div class="pw-list">${rows.length ? rows.map(f => `<div class="pw-row sev-${f.severity}" data-key="${esc(f.review)}#${f.n}">
+      <div class="pw-top"><span class="pw-sev">${esc(f.severity)}</span><code>${esc(f.file)}</code><small>${esc(f.where)}</small><span class="grow"></span>${f.possiblyFixed ? '<small class="hint">file changed since</small>' : ''}<small>${esc(f.sname)}</small></div>
+      <div class="pw-claim">${esc(f.claim)}</div>
+      ${f.evidence ? `<details><summary>Opus's evidence</summary><div class="pw-ev">${esc(f.evidence)}</div></details>` : ''}
+      <div class="pw-acts"><button type="button" class="btn" data-verdict="real" data-sid="${f.sid}" data-review="${esc(f.review)}" data-n="${f.n}">Real</button><button type="button" class="btn" data-verdict="false" data-sid="${f.sid}" data-review="${esc(f.review)}" data-n="${f.n}">False alarm</button></div>
+    </div>`).join('') : '<p class="hint">Nothing open.</p>'}</div>
+    <div class="modal-actions"><button type="button" class="btn" data-cancel hidden></button><button class="btn primary">Close</button></div>`, async () => {}, { wide: true });
+  form.querySelector('.pw-list').addEventListener('click', async e => {
+    const b = e.target.closest('[data-verdict]');
+    if (!b) return;
+    b.parentElement.querySelectorAll('button').forEach(x => { x.disabled = true; });
+    try {
+      await call('findingOutcome', { sessionId: b.dataset.sid, review: b.dataset.review, n: +b.dataset.n, verdict: b.dataset.verdict });
+      b.closest('.pw-row').classList.add('done');
+      b.parentElement.innerHTML = `<small class="${b.dataset.verdict === 'real' ? 'ok-text' : 'hint'}">Recorded: ${b.dataset.verdict === 'real' ? 'real' : 'false alarm'}</small>`;
+    } catch { b.parentElement.querySelectorAll('button').forEach(x => { x.disabled = false; }); }
+  });
+}
+
+// The plan's usage windows (5-hour and weekly), as the latest status line reported them.
+function renderUsage() {
+  const el = $('#usagePill');
+  const u = S.planUsage;
+  const wins = u ? [['5h', u.fiveHour], ['week', u.sevenDay]].filter(([, w]) => w && (!w.resetsAt || w.resetsAt > Date.now())) : [];
+  el.hidden = !wins.length;
+  if (!wins.length) return;
+  const resets = t => {
+    if (!t) return '';
+    const d = new Date(t), today = new Date();
+    return d.toDateString() === today.toDateString() ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : d.toLocaleDateString([], { weekday: 'short', hour: 'numeric' });
+  };
+  const worst = Math.max(...wins.map(([, w]) => w.pct));
+  el.className = `inbox usage ${worst >= 90 ? 'red' : worst >= 75 ? 'amber' : ''}`;
+  el.textContent = wins.map(([k, w]) => `${k} ${Math.round(w.pct)}%`).join(' · ');
+  el.title = 'Your Claude plan usage, as Claude Code reports it:\n' + wins.map(([k, w]) => `${k === '5h' ? 'Last 5 hours' : 'This week'}: ${Math.round(w.pct)}% used${w.resetsAt ? `, resets ${resets(w.resetsAt)}` : ''}`).join('\n');
+}
+
+// How full the session's context is, from its status line: amber past 70%, red past 85%.
+const ctxLevel = pct => (pct == null ? null : pct >= 85 ? 'red' : pct >= 70 ? 'amber' : 'ok');
+function contextMeter(s) {
+  if (s.compacting) return '<span class="ctx compacting" title="Claude is compacting the conversation">compacting…</span>';
+  const c = s.context;
+  if (!c || c.pct == null || s.state === 'closed') return '';
+  const size = c.size ? `${Math.round(c.size / 1000)}k` : '';
+  return `<span class="ctx ctx-${ctxLevel(c.pct)}" title="Context: ${c.pct}% of ${size || 'the window'} used${c.pct >= 70 ? '. Compact, or hand off to a new session, before it fills.' : ''}"><span class="ctx-bar"><span style="width:${Math.min(100, c.pct)}%"></span></span>${c.pct}%${size ? ` of ${size}` : ''}</span>`;
 }
 
 function headerLines(s) {
@@ -379,7 +483,7 @@ function headerLines(s) {
   const plan = S.plan ? ` · ${esc(S.plan)}` : '';
   return `<div class="banner-lines">
     <div class="l1">${version}</div>
-    <div class="l2">${esc(model)}${effort}${plan}</div>
+    <div class="l2">${esc(model)}${effort}${plan}${contextMeter(s)}</div>
     <div class="l3"><button class="cwd" data-act="code" title="Open in VS Code (Shift: git root, Ctrl: new window)${s.liveCwd ? `&#10;Started in ${esc(s.startedShort)}` : ''}">${esc(s.cwdShort)}</button>${s.worktree ? `<span class="wt" title="The session moved into this git worktree; started in ${esc(s.startedShort)}">worktree</span>` : ''}${s.remote ? `<span class="wt" title="Remote Control is on: find &quot;${esc(s.name)}&quot; at claude.ai/code or in the Claude mobile app">remote</span>` : ''}${!s.git && h.branch ? `<span class="branch">⎇ ${esc(h.branch)}</span>` : ''}${s.bgId ? `<button class="sid" data-act="copy-id" title="Copy &quot;claude attach ${esc(s.bgId)}&quot; to continue in any terminal. That terminal takes the session over; Take back returns it here.">⧉ ${esc(s.bgId)}</button>` : ''}</div>
     ${gitLine(s)}
   </div>`;
@@ -402,6 +506,8 @@ function noticeFor(s) {
     return `<div class="notice info"><span class="grow">The workstream's ${what} changed. Restart the session to apply them (the conversation is kept)${s.restartWhenIdle ? '; it restarts when Claude is done' : ''}.</span>${others > 1 ? `<button class="btn" data-act="restart-ws" title="Restart every session of this workstream that runs with older settings; one Claude is working in restarts when it is done">⟳ Restart all ${others}</button>` : ''}<button class="btn" data-act="restart">⟳ Restart</button></div>`;
   }
   if (s.state === 'failed') return `<div class="notice err"><span class="grow">${esc(s.error || 'The session failed to start.')}</span><button class="btn" data-act="restart">Try again</button></div>`;
+  if (s.handingOff) return `<div class="notice info"><span class="grow">Claude is writing a hand-off note for a new session…</span></div>`;
+  if (s.context?.pct >= 85 && s.state === 'idle' && !s.compacting) return `<div class="notice warn"><span class="grow">Context is almost full (${s.context.pct}%). Compact the conversation, or hand off to a new session with a summary note.</span><button class="btn" data-act="compact" title="Type /compact: Claude replaces the conversation with a summary and continues in this session">Compact</button><button class="btn" data-act="handoff" title="Claude writes a hand-off note; you read it, then a new session starts from it and this one closes (its conversation is kept)">Hand off…</button></div>`;
   if (s.state === 'detached' && !s.termLive) return `<div class="notice info"><span class="grow">Detached. The session keeps running in the background.</span><button class="btn" data-act="reopen">Reattach</button></div>`;
   if (s.error) return `<div class="notice err"><span class="grow">${esc(s.error)}</span></div>`;
   return '';
@@ -1366,6 +1472,22 @@ function newSessionDialog(ws) {
 const settingsHelpers = () => ({ S, modal, call, api, toast, esc, COLORS, archiveDialog });
 const wsSettingsDialog = ws => openWsSettings(ws, settingsHelpers());
 
+// Hand off: Claude writes the note (this can take a minute), the user reads and may edit
+// it, then a new session starts from it and this one closes.
+async function handOffDialog(sid) {
+  const s = S.sessions.find(x => x.id === sid);
+  if (!s) return;
+  toast('Claude is writing the hand-off note…');
+  let note;
+  try { note = await call('handOff', { id: sid }); } catch { return; }
+  const form = modal(`<h3>Hand off “${esc(s.name)}”</h3>
+    <p class="hint">Claude wrote this note for the next session. Edit it if something is missing or wrong. <b>Start new session</b> starts “${esc(s.role)} 2” in the same folder with the same model, gives it the note, and closes this session (its conversation is kept under Closed).</p>
+    <label class="field"><span>${esc(note.path)}</span><textarea name="text" rows="18" spellcheck="false" style="font-family:var(--mono);font-size:12px">${esc(note.text)}</textarea></label>
+    <div class="modal-actions"><button type="button" class="btn" data-cancel>Not now</button><button class="btn primary">Start new session</button></div>`,
+  async fd => { await call('startHandoff', { id: sid, path: note.path, text: fd.get('text') }); toast('New session starting from the hand-off note'); }, { wide: true });
+  form.querySelector('textarea').focus();
+}
+
 function archiveDialog(ws) {
   const open = sessionsOf(ws.id).filter(isOpenSession), shells = shellsOf(ws.id);
   const working = open.filter(s => ['busy', 'needs-you'].includes(s.state));
@@ -1419,13 +1541,17 @@ function pushDialog(s) {
     ? `Push ${g.ahead} commit${g.ahead === 1 ? '' : 's'} from <code>${esc(g.branch)}</code> to <code>${esc(g.upstream)}</code>?`
     : `Publish <code>${esc(g.branch)}</code> to <code>origin</code> (git push -u origin HEAD)?`;
   const behind = g.behind ? `<p class="warn-text">The remote has ${g.behind} commit${g.behind === 1 ? '' : 's'} you don't have, so the push will be rejected. Pull first.</p>` : '';
-  const form = modal(`<h3>${g.upstream ? 'Push' : 'Publish branch'}</h3><p>${what}</p>${behind}
+  // The code-review light at push time: asked once, never blocking.
+  const pl = reviewOf(s.id)?.push;
+  const rv = pl && pl.color === 'red' ? `<div class="notice warn" style="margin-bottom:10px"><span class="grow"><b>Review before you push.</b> ${pl.reasons.map(x => esc(x.text)).join('; ')}.</span><button type="button" class="btn" data-review-first>Run /code-review first</button></div>` : '';
+  const form = modal(`<h3>${g.upstream ? 'Push' : 'Publish branch'}</h3><p>${what}</p>${behind}${rv}
     <div class="modal-actions"><button type="button" class="btn" data-cancel>Cancel</button><button class="btn primary">${g.upstream ? 'Push' : 'Publish'}</button></div>`,
   async () => {
     const out = await api.call('pushSession', { id: s.id });
     toast(out.split('\n').filter(Boolean).pop() || 'Pushed');
   });
   form.querySelector('.btn.primary').focus();
+  form.querySelector('[data-review-first]')?.addEventListener('click', () => reviewLightDialog(s.id));
 }
 
 function deployDialog(s) {
@@ -1477,19 +1603,29 @@ function markdown(src) {
 }
 async function appSettingsDialog() {
   const li = await call('loginItem');
+  const hk = await call('hotkey').catch(() => ({ hotkey: '', saved: '' }));
   const form = modal(`<h3>polycli settings</h3>
     <label class="check-row"><input type="checkbox" name="login" ${li.on ? 'checked' : ''}><span>Start polycli when I sign in to Windows</span></label>
     <p class="hint">${li.packaged ? '' : 'polycli runs from source here, so Windows starts Electron with this app folder; Startup apps in Windows Settings lists it as Electron. '}Claude sessions that were open are reattached when it starts; after a restart of Windows they start again with their conversation.</p>
     <label class="check-row"><input type="checkbox" name="cwAuto" ${S.cowork?.auto ? 'checked' : ''}><span>Accept Cowork requests automatically: a link to a workstream the task names, and every prompt (one starting with /, !, # or @ still asks). Otherwise each request opens a dialog.</span></label>
+    <label class="field"><span>Global hotkey: brings polycli to the front with the command palette open (empty: none). In the window, Ctrl+K or Ctrl+Shift+P opens the palette.</span><input name="hotkey" value="${esc(hk.saved)}" placeholder="Super+Alt+C" spellcheck="false">${hk.saved && !hk.hotkey ? '<span class="warn-text">Windows didn\'t give polycli this key: another app may use it.</span>' : ''}</label>
     <div class="field"><span>Permission profiles</span><div class="row"><span class="hint grow">${(S.profiles || []).map(p => esc(p.name)).join(', ')}: guardrails each workstream picks in its ⚙ Settings.</span><button type="button" class="btn" id="editProfiles" style="flex:none">Edit profiles…</button></div></div>
+    <div class="field"><span>Code review: what the light has learned per project from your /code-review runs</span>${(() => {
+      const p = Object.entries(S.review?.projects || {});
+      if (!p.length) return '<span class="hint">Nothing yet: the light adjusts to a project after three reviews.</span>';
+      return `<table class="keys-table"><tbody>${p.map(([root, x]) => `<tr><td><code>${esc(root.split('/').slice(-2).join('/'))}</code></td><td>reviews found something new ${x.newFindings} time${x.newFindings === 1 ? '' : 's'} out of ${x.reviews}</td><td>${x.reviews < 3 ? 'learning' : x.factor > 1 ? 'speaks up less' : x.factor < 1 ? 'speaks up earlier' : 'as at first'}</td><td><button type="button" class="btn" data-reset-root="${esc(root)}">Reset</button></td></tr>`).join('')}</tbody></table>`;
+    })()}</div>
     <div class="modal-actions"><button type="button" class="btn" data-cancel>Cancel</button><button class="btn primary">Save</button></div>`,
   async fd => {
     const on = fd.get('login') === 'on';
     if (on !== li.on) { const r = await call('setLoginItem', { on }); toast(r.on ? 'polycli will start when you sign in' : 'polycli will no longer start when you sign in'); }
     const auto = fd.get('cwAuto') === 'on';
     if (auto !== !!S.cowork?.auto) { await call('coworkAuto', { on: auto }); toast(auto ? 'Cowork requests are now accepted automatically' : 'Cowork requests ask again'); }
+    const key = String(fd.get('hotkey') || '').trim();
+    if (key !== (hk.saved || '')) { await api.call('setHotkey', { hotkey: key }); toast(key ? `Global hotkey: ${key}` : 'Global hotkey off'); }
   });
   form.querySelector('#editProfiles').onclick = () => profilesDialog(settingsHelpers());
+  form.querySelectorAll('[data-reset-root]').forEach(b => b.onclick = async () => { await call('resetReviewLearning', { root: b.dataset.resetRoot }); b.closest('tr').querySelector('td:nth-child(3)').textContent = 'reset'; b.remove(); });
   return form;
 }
 
@@ -1513,6 +1649,8 @@ document.addEventListener('click', async e => {
   if (cwEl) return coworkClick(cwEl);
   const promptEl = e.target.closest('[data-prompt]');
   if (promptEl) return promptClick(promptEl);
+  const findEl = e.target.closest('[data-findings]');
+  if (findEl) { e.stopPropagation(); return findingsDialog(findEl.dataset.findings); }
   const el = e.target.closest('[data-close],[data-tab],[data-select-ws],[data-act],[data-reopen],[data-closed],[data-archived-toggle],[data-restore-ws]');
   if (!el) {
     if (!e.target.closest('.inbox-menu')) $('#inboxMenu').hidden = true;
@@ -1572,6 +1710,9 @@ document.addEventListener('click', async e => {
   if (act === 'gh-pr' && ses?.git?.pr) return call('openGithub', { url: ses.git.pr.url });
   if (act === 'copy-id' && sid) { const s = S.sessions.find(x => x.id === sid); if (s?.bgId) copyText(`claude attach ${s.bgId}`, `Copied: claude attach ${s.bgId}`); return; }
   if ((act === 'restart' || act === 'retrust') && sid) return call('restartSession', { id: sid });
+  if (act === 'review-light' && sid) return reviewLightDialog(sid);
+  if (act === 'compact' && sid) return call('compactSession', { id: sid }).then(() => toast('Compacting the conversation'));
+  if (act === 'handoff' && sid) return handOffDialog(sid);
   if (act === 'restart-ws' && sid) {
     const s = S.sessions.find(x => x.id === sid);
     if (s) return call('restartWorkstreamSessions', { workstreamId: s.workstreamId }).then(r => toast(`${r.now} restarting${r.later ? `, ${r.later} when Claude is done` : ''}`));
@@ -1627,6 +1768,39 @@ api.onFocusTab(async tab => {
   if (s) await call('setActive', { id: s.workstreamId });
   await call('setUi', { activeTab: tab, view: 'main' });
 });
+
+// ---------------- command palette (palette.js) ----------------
+const paletteActions = {
+  focusTab: async (wsId, tab) => { await call('setActive', { id: wsId }); S.ui.view = 'main'; await call('setUi', { activeTab: tab, view: 'main' }); },
+  setView: v => setView(v),
+  newSession: ws => newSessionDialog(ws),
+  newShell: ws => newShellDialog(ws),
+  wsSettings: ws => wsSettingsDialog(ws),
+  reviewLight: sid => (reviewOf(sid) ? reviewLightDialog(sid) : call('runCodeReview', { id: sid }).then(() => toast('/code-review started'))),
+  handOff: sid => handOffDialog(sid),
+  findings: target => findingsDialog(target),
+  appSettings: () => appSettingsDialog(),
+  help: () => helpDialog(),
+  act: (act, sid) => { const s = S.sessions.find(x => x.id === sid); if (act === 'git-commit' && s) return commitDialog(s); if (act === 'git-push' && s?.git) return pushDialog(s); },
+  // A search result: a prompt opens its session, an artifact its viewer, a card the board.
+  openResult: async r => {
+    if (r.workstreamId) await call('setActive', { id: r.workstreamId });
+    if (r.type === 'prompt') { S.ui.view = 'main'; await call('setUi', { activeTab: `s:${r.sessionId}`, view: 'main' }); return; }
+    if (r.type === 'artifact') { selectArtifact(r.workstreamId, r.artifactId); S.ui.view = ''; return setView('artifacts'); }
+    if (r.type === 'card') { S.ui.view = ''; return setView('board'); }
+  },
+};
+const showPalette = () => openPalette({ S, call, toast, actions: paletteActions });
+api.onPalette?.(() => showPalette());
+// Ctrl+Shift+P anywhere; Ctrl+K too, except in a terminal (where it belongs to the shell).
+document.addEventListener('keydown', e => {
+  const inTerm = !!e.target.closest?.('.xterm');
+  if (e.ctrlKey && !e.altKey && ((e.shiftKey && e.code === 'KeyP') || (!e.shiftKey && e.code === 'KeyK' && !inTerm))) {
+    if (!$('#modalBack').hidden) return;
+    e.preventDefault(); e.stopPropagation();
+    showPalette();
+  }
+}, true);
 api.onData((termId, data) => {
   const t = terms.get(termId);
   if (!t) return;

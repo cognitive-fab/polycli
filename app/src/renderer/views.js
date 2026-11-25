@@ -5,6 +5,7 @@
 import { boardView, leaveBoard } from './board.js';
 import { testsView, leaveTests } from './testsview.js';
 import { artifactsView, leaveArtifacts, artifactsTick } from './artifactsview.js';
+import { worktreesView, leaveWorktrees } from './worktreesview.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const IMG = /\.(png|jpe?g|gif|webp|svg)$/i;
@@ -146,7 +147,7 @@ export function showProject(el, { ws, view, call, toast, ask, setView }) {
   el.dataset.key = key;
   paint();
 }
-export function hideProject() { leaveBoard(); leaveTests(); leaveArtifacts(); if (current) { current.el.dataset.key = ''; current = null; } }
+export function hideProject() { leaveBoard(); leaveTests(); leaveArtifacts(); leaveWorktrees(); if (current) { current.el.dataset.key = ''; current = null; } }
 
 // From a card: open one of its documents in the Docs view.
 export function openDoc(c, rel) {
@@ -162,12 +163,13 @@ function paint() {
   if (!c) return;
   c.dirty = false;
   const m = memOf(c.ws.id);
-  leaveBoard(); leaveTests(); leaveArtifacts();
+  leaveBoard(); leaveTests(); leaveArtifacts(); leaveWorktrees();
   // Views share one container; drop the handlers the board and tests views set on it.
   for (const k of ['onclick', 'ondragstart', 'ondragend', 'ondragover', 'ondrop', 'onkeydown']) c.el[k] = null;
   if (c.view === 'board') return boardView(c);
   if (c.view === 'tests') return testsView(c);
   if (c.view === 'artifacts') return artifactsView(c);
+  if (c.view === 'worktrees') return worktreesView(c);
   if (c.view === 'docs') return m.docFile ? openFile(m.docFile, 'docs') : docsHome(m.docDir);
   return m.archFile ? (/\.(md|markdown)$/i.test(m.archFile) ? openFile(m.archFile, 'architecture') : archViewer(m.archFile)) : archHome();
 }

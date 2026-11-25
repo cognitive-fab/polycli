@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('polycli', {
   onTests: fn => ipcRenderer.on('tests:event', (_e, ev) => fn(ev)),
   onCoworkAuto: fn => ipcRenderer.on('cowork-auto', (_e, ev) => fn(ev)),
   onFocusTab: fn => ipcRenderer.on('focus-tab', (_e, tab) => fn(tab)),
+  onPalette: fn => ipcRenderer.on('palette', () => fn()),
   // The path of a file pasted or dropped from Explorer ('' for data without a file).
   filePath: file => { try { return webUtils.getPathForFile(file) || ''; } catch { return ''; } },
 });

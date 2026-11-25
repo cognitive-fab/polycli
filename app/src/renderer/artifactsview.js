@@ -57,6 +57,12 @@ export function artifactsView(c) {
 
 export function leaveArtifacts() { ctx = null; }
 
+// From the command palette: open the view with this artifact selected.
+export function selectArtifact(wsId, id) {
+  const m = memOf(wsId);
+  m.selected = id; m.local = false; m.filter = 'all'; m.query = '';
+}
+
 // Called on every state push while the view is on screen: reload the list when a
 // session or a Cowork task reported something new.
 export function artifactsTick(ws) {

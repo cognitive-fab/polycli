@@ -188,6 +188,61 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .swatch.sel { border-color: var(--text); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
 .modal.wide { width: 680px; max-height: calc(100vh - 48px); overflow-y: auto; }
+/* Context meter in the session header, plan usage in the top bar. */
+.ctx { display: inline-flex; align-items: center; gap: 5px; margin-left: 10px; font-size: 11.5px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.ctx-bar { display: inline-block; width: 46px; height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.ctx-bar > span { display: block; height: 100%; background: var(--ok, #4cc38a); }
+.ctx-amber .ctx-bar > span { background: var(--needs, #f2b84b); }
+.ctx-amber { color: var(--needs, #f2b84b); }
+.ctx-red .ctx-bar > span { background: var(--bad, #f06a6a); }
+.ctx-red { color: var(--bad, #f06a6a); }
+.ctx.compacting { color: var(--accent); }
+.inbox.usage { cursor: default; font-variant-numeric: tabular-nums; }
+.inbox.usage.amber { color: var(--needs, #f2b84b); }
+.inbox.usage.red { color: var(--bad, #f06a6a); }
+/* Command palette. */
+.palette-back { position: fixed; inset: 0; z-index: 60; background: #0006; display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; }
+.palette { width: 640px; max-width: calc(100vw - 32px); background: var(--bg-elev); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 20px 60px #000a; overflow: hidden; display: flex; flex-direction: column; }
+.palette input { border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--text); font: inherit; font-size: 15px; padding: 14px 16px; outline: none; }
+.palette-list { max-height: 50vh; overflow-y: auto; padding: 6px; }
+.palette-item { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 7px; cursor: pointer; }
+.palette-item.on { background: var(--bg-hover); }
+.palette-item .pk { flex: none; width: 92px; font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-faint); }
+.palette-item .pl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palette-item .ps { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-faint); font-size: 12px; }
+.palette-empty { padding: 14px; color: var(--text-faint); }
+.palette-foot { border-top: 1px solid var(--line); padding: 7px 14px; font-size: 11.5px; color: var(--text-faint); }
+/* Worktrees view. */
+.wt-table { overflow-x: auto; }
+.wt-table td { vertical-align: top; }
+.wt-acts { white-space: nowrap; text-align: right; }
+.wt-acts .btn { margin-left: 4px; }
+/* polywatch findings badge and the code-review light. */
+.pw-badge { flex: none; font-size: 10.5px; font-weight: 600; min-width: 16px; padding: 0 5px; border-radius: 8px; text-align: center; line-height: 16px; margin: 0 4px; cursor: pointer; color: #fff; background: var(--text-faint); }
+.pw-badge.sev-high { background: var(--bad); }
+.pw-badge.sev-medium { background: var(--needs); color: #1a1a1a; }
+.rv-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.rv-dot.rv-green { background: var(--ok, #4cc38a); }
+.rv-dot.rv-orange { background: var(--needs); }
+.rv-dot.rv-red { background: var(--bad); }
+.ws-row .rv-dot { margin: 0 4px; }
+.rv-light { display: inline-flex; align-items: center; gap: 5px; margin-left: 10px; background: none; border: 1px solid transparent; border-radius: 10px; padding: 0 7px; font-size: 11.5px; color: var(--text-dim); }
+.rv-light:hover { border-color: var(--line); color: var(--text); }
+.rv-light.rv-orange { color: var(--needs); }
+.rv-light.rv-red { color: var(--bad); font-weight: 600; }
+.modal h3 .rv-dot { vertical-align: 1px; margin-right: 4px; }
+.rv-reasons { margin: 0 0 10px; padding-left: 18px; line-height: 1.5; font-size: 13px; }
+.pw-list { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; }
+.pw-row { border: 1px solid var(--line); border-left: 3px solid var(--text-faint); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
+.pw-row.sev-high { border-left-color: var(--bad); }
+.pw-row.sev-medium { border-left-color: var(--needs); }
+.pw-row.done { opacity: .55; }
+.pw-top { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.pw-top .grow { flex: 1; }
+.pw-sev { font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-dim); }
+.pw-claim { font-size: 13px; line-height: 1.45; }
+.pw-ev { font-size: 12px; color: var(--text-dim); line-height: 1.45; margin-top: 4px; }
+.pw-acts { display: flex; gap: 6px; justify-content: flex-end; }
 /* Workstream settings: tabs, lists of plugins, skills and servers, rule boxes. */
 .modal.settings-modal { width: 780px; }
 .tabset { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin: -4px 0 14px; }

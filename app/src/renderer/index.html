@@ -12,6 +12,7 @@
     <div class="brand">polycli</div>
     <div class="topbar-title" id="topTitle"></div>
     <div class="topbar-right">
+      <span class="inbox usage" id="usagePill" hidden></span>
       <button class="inbox" id="billBtn" title="Time and tokens for this folder; click for monthly totals" hidden></button>
       <button class="inbox" id="helpBtn"title="Help">? Help</button>
       <button class="inbox" id="appSettingsBtn" title="polycli settings">⚙</button>
@@ -37,6 +38,7 @@
         <button data-view="docs" title="The documents in docs/: preview and edit Markdown">Docs</button>
         <button data-view="tests" title="Run the project's test and check scripts and see the results">Tests</button>
         <button data-view="artifacts" title="What Cowork tasks reported and Claude sessions made: claude.ai artifacts and documents, opened here">Artifacts</button>
+        <button data-view="worktrees" title="The repository's git worktrees: merged, changed or in use, and removing the ones that are done">Worktrees</button>
         <span class="viewbar-gap"></span>
         <span class="layout-btns" role="group" aria-label="Panes">
           <button data-layout="1" title="One pane">▢</button>
