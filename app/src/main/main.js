@@ -502,7 +502,7 @@ app.whenReady().then(() => {
   win.on('focus', () => win.flashFrame(false));
   app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
   if (!process.env.POLYCLI_SMOKE) registerHotkey(manager.state.ui.hotkey ?? DEFAULT_HOTKEY);
-  app.on('before-quit', () => { try { require('electron').globalShortcut.unregisterAll(); } catch {} updater?.dispose(); polywatch.dispose(); board.dispose(); tests.dispose(); billing.stop(); cowork.dispose(); bridge.stop(); manager.dispose(); hooks.stop(); pty.dispose(); store.flush(); });
+  app.on('before-quit', () => { try { require('electron').globalShortcut.unregisterAll(); } catch {} updater?.dispose(); polywatch?.dispose(); board.dispose(); tests.dispose(); billing.stop(); cowork.dispose(); bridge.stop(); manager.dispose(); hooks.stop(); pty.dispose(); store.flush(); });
 });
 
 app.on('window-all-closed', () => app.quit());
