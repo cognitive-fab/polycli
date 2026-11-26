@@ -157,7 +157,8 @@ async function catalog({ refresh = false } = {}) {
 // a terminal, where Claude shows that command. `only`: switch it off in Claude, so only
 // the workstreams that turn it On get it.
 async function installPlugin(id, { only = false } = {}) {
-  if (!/^[\w.+-]{1,100}@[\w.+-]{1,100}$/.test(String(id))) throw new Error('bad plugin id');
+  // A letter or digit first on both sides, so the id can't be read as an option.
+  if (!/^[A-Za-z0-9][\w.+-]{0,99}@[A-Za-z0-9][\w.+-]{0,99}$/.test(String(id))) throw new Error('bad plugin id');
   const entry = (await catalog()).find(p => p.id === id);
   if (!entry) throw new Error('That plugin is not in a directory Claude Code knows');
   const inTerminal = `This plugin is installed by running a command, which Claude Code shows you first. Install it in a terminal: claude plugin install ${id}`;
@@ -171,7 +172,13 @@ async function installPlugin(id, { only = false } = {}) {
     if (/confirm|--yes|\s-y\b|command/i.test(`${why} ${j?.failureCode || ''}`)) throw new Error(inTerminal);
     throw new Error(why || 'claude plugin install failed');
   }
-  if (only) await claude.run(['plugin', 'disable', id], { timeout: 60000 });
+  if (only) {
+    const d = await claude.run(['plugin', 'disable', id], { timeout: 60000 });
+    if (!d.ok) {
+      await plugins({ refresh: true });
+      throw new Error(`Installed ${id}, but it could not be switched off in Claude, so every workstream has it: ${d.out.trim().split('\n').pop().slice(0, 200)}`);
+    }
+  }
   await plugins({ refresh: true });
   return { id, only };
 }
