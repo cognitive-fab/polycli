@@ -15,7 +15,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function waitFor(pred, ms, label) {
   const t0 = Date.now();
   while (Date.now() - t0 < ms) {
-    const v = pred();
+    const v = await pred();
     if (v) return v;
     await sleep(250);
   }
@@ -702,6 +702,48 @@ async function runSettings({ app, manager }) {
   app.exit(report.ok ? 0 : 1);
 }
 
+// Browse plugins in the Plugins tab: search the directories, then install a small
+// Anthropic plugin "for this workstream only" through the dialog. It must be installed,
+// off in Claude and On in the workstream. It is uninstalled again at the end (this
+// installs into your real ~/.claude for a moment).
+async function runBrowse({ app, win, manager }) {
+  const report = { phase: 'browse' };
+  const wc = win.webContents;
+  const ID = 'explanatory-output-style@claude-plugins-official';
+  const js = s => wc.executeJavaScript(s);
+  try {
+    const ws = manager.createWorkstream({ name: 'browse-test', folder: FOLDER });
+    manager.setUi({ activeWorkstream: ws.id });
+    await sleep(1500);
+    await js(`document.querySelector('[data-act="wsSettings"]').click()`);
+    await sleep(800);
+    await js(`document.querySelector('[data-tab="plugins"]').click()`);
+    await js(`document.querySelector('[data-browse]').click()`);
+    await waitFor(async () => js(`document.querySelectorAll('#pbList [data-cat]').length > 0`), 30000, 'catalog rows');
+    report.all = await js(`document.querySelectorAll('#pbList [data-cat]').length`);
+    report.categories = await js(`document.querySelector('#pbCat').options.length - 1`);
+    await js(`(() => { const i = document.querySelector('#pbSearch'); i.value = 'explanatory'; i.dispatchEvent(new Event('input')); })()`);
+    report.hits = await js(`[...document.querySelectorAll('#pbList [data-cat]')].map(r => r.dataset.cat)`);
+    try { fs.writeFileSync(path.join(OUT, 'browse.png'), (await wc.capturePage()).toPNG()); } catch {}
+    await js(`document.querySelector('#pbList [data-cat="${ID}"] [data-install]').click()`);
+    await waitFor(async () => js(`!!document.querySelector('#pbList [data-cat="${ID}"] .ok-text')`), 240000, 'installed');
+    report.row = await js(`document.querySelector('#pbList [data-cat="${ID}"] .ok-text').textContent`);
+    const list = JSON.parse((await claude.run(['plugin', 'list', '--json'])).out.replace(/^[^[]*/, ''));
+    const p = list.find(x => x.id === ID);
+    report.claude = p ? { installed: true, enabled: p.enabled } : { installed: false };
+    report.workstream = manager.ws(ws.id).plugins || {};
+    await js(`document.querySelector('[data-cancel]').click()`);
+    report.ok = !!(report.all === 80 && report.hits.includes(ID) && p && p.enabled === false && report.workstream[ID] === true);
+  } catch (e) {
+    report.ok = false;
+    report.error = String(e.stack || e);
+  }
+  report.uninstalled = (await claude.run(['plugin', 'uninstall', ID], { timeout: 120000 })).ok;
+  fs.writeFileSync(path.join(OUT, 'browse.json'), JSON.stringify(report, null, 2));
+  console.log('SMOKE browse', JSON.stringify(report));
+  app.exit(report.ok ? 0 : 1);
+}
+
 // Context meter and hand-off (docs/design/v0.4.md §4): the status line fills the meter,
 // /compact typed by polycli runs (PreCompact/PostCompact), and a hand-off writes a note
 // and starts the next session from it while closing this one.
@@ -814,6 +856,7 @@ async function run(ctx) {
   if (process.env.POLYCLI_SMOKE === 'polywatch') return runPolywatch(ctx);
   if (process.env.POLYCLI_SMOKE === 'handoff') return runHandoff(ctx);
   if (process.env.POLYCLI_SMOKE === 'settings') return runSettings(ctx);
+  if (process.env.POLYCLI_SMOKE === 'browse') return runBrowse(ctx);
   if (process.env.POLYCLI_SMOKE === 'packaged') return runPackaged(ctx);
   if (process.env.POLYCLI_SMOKE === 'bridge') return runBridge(ctx);
   if (process.env.POLYCLI_SMOKE === 'help') return runHelp(ctx);

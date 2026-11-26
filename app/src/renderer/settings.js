@@ -67,7 +67,16 @@ export async function wsSettingsDialog(ws, h) {
 
     <div class="tabpanel" data-panel="plugins" hidden>
       <div class="hint">What this workstream's Claude sessions load. <b>As in Claude</b> follows <code>claude plugin enable/disable</code>; On and Off apply to this workstream only. Each plugin adds its skills, agents and tool descriptions to every request: the tokens column is that cost.</div>
-      <div class="cfg-head"><span id="plugSummary" class="grow">Reading what Claude has installed…</span><button type="button" class="btn" data-refresh title="Read the plugins and skills again">↻ Refresh</button></div>
+      <div class="cfg-head"><span id="plugSummary" class="grow">Reading what Claude has installed…</span><button type="button" class="btn" data-browse title="Find plugins in the directories Claude Code knows (the official one and those you added) and install them">Browse plugins…</button><button type="button" class="btn" data-refresh title="Read the plugins and skills again">↻ Refresh</button></div>
+      <div id="plugBrowse" class="plug-browse" hidden>
+        <div class="row">
+          <input id="pbSearch" type="search" placeholder="Search plugins: name, description, author" spellcheck="false">
+          <select id="pbCat"><option value="">All categories</option></select>
+          <select id="pbMarket"><option value="">All directories</option></select>
+        </div>
+        <div class="cfg-head"><label class="check-row grow"><input type="checkbox" id="pbOnly" checked><span>Install for <b>this workstream</b> only (switched off in Claude, On here)</span></label><button type="button" class="btn" data-catupdate title="Fetch the latest version of each directory (claude plugin marketplace update)">Update directories</button></div>
+        <div id="pbList" class="cfg-list"><span class="hint">Reading the directories…</span></div>
+      </div>
       <div id="plugList" class="cfg-list"></div>
       <h4 class="cfg-sub">Skills</h4>
       <div class="hint">Your own and this project's skills can be set one by one. <b>Name only</b> keeps a skill usable while leaving its description out of every request; <b>Only when I type it</b> hides it from Claude until you type <code>/name</code>. A plugin's skills follow their plugin.</div>
@@ -229,6 +238,64 @@ export async function wsSettingsDialog(ws, h) {
     await Promise.all([worker(), worker(), worker()]);
   }
   form.querySelector('[data-refresh]').onclick = () => { costs.clear(); loadInventory(true, false); };
+
+  // Browse plugins: the directories' catalogs, read from Claude Code's local copies.
+  let cat = null;
+  const browse = form.querySelector('#plugBrowse');
+  const pb = id => form.querySelector(`#${id}`);
+  const drawCatalog = () => {
+    if (!cat) return;
+    const q = pb('pbSearch').value.trim().toLowerCase();
+    const c = pb('pbCat').value, m = pb('pbMarket').value;
+    const hits = cat.filter(p => (!c || p.category === c) && (!m || p.marketplace === m)
+      && (!q || `${p.name} ${p.description} ${p.author || ''}`.toLowerCase().includes(q)));
+    const shown = hits.slice(0, 80);
+    pb('pbList').innerHTML = (shown.map(p => `<div class="cfg-row" data-cat="${esc(p.id)}" title="${esc(p.description)}">
+        <span class="grow"><b>${esc(p.name)}</b> <small>${esc(p.category)}${p.author ? ` · ${esc(p.author)}` : ''}${p.official ? '' : ` · ${esc(p.marketplace)}`} — ${esc(p.description.slice(0, 120))}</small></span>
+        ${p.homepage ? `<button type="button" class="btn" data-home="${esc(p.homepage)}" title="${esc(p.homepage)}">↗</button>` : ''}
+        ${p.installed ? `<small class="ok-text">installed${p.enabled === false ? ' (off in Claude)' : ''}</small>`
+          : p.runsCommand ? '<small class="hint" title="It is installed by running a command; install it in a terminal: claude plugin install …">in a terminal</small>'
+          : '<button type="button" class="btn" data-install>Install</button>'}
+      </div>`).join('') || '<span class="hint">No plugin matches.</span>')
+      + (hits.length > shown.length ? `<span class="hint">${hits.length - shown.length} more: narrow the search.</span>` : '');
+  };
+  const loadCatalog = async refresh => {
+    try { cat = await call('pluginCatalog', { refresh }); } catch { return; }
+    const fill = (sel, values, all) => { const cur = sel.value; sel.innerHTML = `<option value="">${all}</option>` + values.map(v => `<option ${v === cur ? 'selected' : ''}>${esc(v)}</option>`).join(''); };
+    fill(pb('pbCat'), [...new Set(cat.map(p => p.category))].sort(), 'All categories');
+    fill(pb('pbMarket'), [...new Set(cat.map(p => p.marketplace))], 'All directories');
+    drawCatalog();
+  };
+  form.querySelector('[data-browse]').onclick = () => {
+    browse.hidden = !browse.hidden;
+    if (!browse.hidden) { if (!cat) loadCatalog(false); pb('pbSearch').focus(); }
+  };
+  pb('pbSearch').addEventListener('input', drawCatalog);
+  // Enter in the search box would submit (save and close) the settings form.
+  pb('pbSearch').addEventListener('keydown', e => { if (e.key === 'Enter') e.preventDefault(); });
+  pb('pbCat').onchange = drawCatalog;
+  pb('pbMarket').onchange = drawCatalog;
+  form.querySelector('[data-catupdate]').onclick = async e => {
+    e.target.disabled = true;
+    try { await call('updatePluginCatalog', {}); await loadCatalog(true); toast('Plugin directories updated'); } catch {}
+    e.target.disabled = false;
+  };
+  pb('pbList').addEventListener('click', async e => {
+    const home = e.target.closest('[data-home]');
+    if (home) return void call('openLink', { url: home.dataset.home }).catch(() => {});
+    const b = e.target.closest('[data-install]');
+    if (!b) return;
+    const id = b.closest('[data-cat]').dataset.cat;
+    const only = pb('pbOnly').checked;
+    b.disabled = true; b.textContent = 'Installing…';
+    try {
+      await call('installPlugin', { id, only, workstreamId: ws.id });
+      if (only) plugSw[id] = true;
+      toast(only ? `Installed ${id.split('@')[0]}: On in this workstream, off elsewhere. Restart its sessions to load it.` : `Installed ${id.split('@')[0]} for all your sessions. Restart sessions to load it.`);
+      costs.delete(id);
+      await Promise.all([loadCatalog(false), loadInventory(false, false)]);
+    } catch { b.disabled = false; b.textContent = 'Install'; }
+  });
   form.querySelector('[data-health]').onclick = async e => { e.target.disabled = true; await loadInventory(false, true); e.target.disabled = false; };
 
   // Permissions

@@ -183,6 +183,18 @@ const OPS = {
     return { plugins, skills, mcp };
   },
   pluginCost: a => require('./claudeconfig').pluginCost(String(a.id)),
+  // The plugin directories (Browse… in the Plugins tab).
+  pluginCatalog: a => require('./claudeconfig').catalog({ refresh: !!a.refresh }),
+  updatePluginCatalog: () => require('./claudeconfig').updateCatalog(),
+  installPlugin: async a => {
+    const r = await require('./claudeconfig').installPlugin(String(a.id), { only: !!a.only });
+    // "Only for this workstream": it is off in Claude, and On here.
+    if (a.only && a.workstreamId) {
+      const w = manager.ws(a.workstreamId);
+      manager.updateWorkstream({ id: w.id, plugins: { ...(w.plugins || {}), [r.id]: true } });
+    }
+    return r;
+  },
   copySkillToProject: a => require('./claudeconfig').copySkillToProject(manager.ws(a.workstreamId).folder, a.path),
   projectRules: a => require('./claudeconfig').projectRules(manager.ws(a.workstreamId).folder),
   removeProjectRule: a => require('./claudeconfig').removeProjectRule(manager.ws(a.workstreamId).folder, String(a.key)),

@@ -1,7 +1,8 @@
 'use strict';
 // What Claude Code would give a session in a workstream's folder: installed plugins,
-// skills (yours, the project's, each plugin's) and MCP servers. Read-only: polycli
-// never writes ~/.claude or ~/.claude.json (docs/design/v0.4.md §1, §2).
+// skills (yours, the project's, each plugin's) and MCP servers. polycli never writes
+// ~/.claude or ~/.claude.json itself (docs/design/v0.4.md §1, §2); installing a plugin
+// from a directory goes through `claude plugin install`.
 //
 // `claude plugin list --json` and `claude plugin details` start claude (one to two
 // seconds each), so their answers are kept until a Refresh.
@@ -124,6 +125,63 @@ async function mcpServers(folder, { health = false, ...opts } = {}) {
   return [...out.values()];
 }
 
+// The plugin directories Claude Code knows (claude plugin marketplace list), from their
+// local copies: ~/.claude/plugins/marketplaces/<name>/.claude-plugin/marketplace.json.
+// Nothing is fetched here; "Update the directory" runs `claude plugin marketplace update`.
+async function catalog({ refresh = false } = {}) {
+  const known = readJson(path.join(HOME, 'plugins', 'known_marketplaces.json')) || {};
+  const installed = new Map((await plugins({ refresh })).map(p => [p.id, p]));
+  const out = [];
+  for (const [market, info] of Object.entries(known)) {
+    const dir = info?.installLocation || path.join(HOME, 'plugins', 'marketplaces', market);
+    const m = readJson(path.join(dir, '.claude-plugin', 'marketplace.json'));
+    if (!m || !Array.isArray(m.plugins)) continue;
+    for (const p of m.plugins) {
+      if (!p || typeof p.name !== 'string') continue;
+      const id = `${p.name}@${market}`;
+      const author = typeof p.author === 'string' ? p.author : p.author?.name || null;
+      out.push({ id, name: p.name, marketplace: market, official: market === 'claude-plugins-official', category: p.category || 'other',
+        description: String(p.description || '').slice(0, 400), author, homepage: typeof p.homepage === 'string' && /^https:\/\//.test(p.homepage) ? p.homepage : null,
+        byAnthropic: author === 'Anthropic',
+        // Installed by running a command the directory names: Claude Code asks first, so
+        // polycli leaves those to a terminal.
+        runsCommand: p.source?.source === 'command',
+        installed: installed.has(id), enabled: installed.get(id)?.enabled ?? null });
+    }
+  }
+  return out.sort((a, b) => Number(b.official) - Number(a.official) || a.name.localeCompare(b.name));
+}
+
+// Installs a plugin listed in a known directory, as `claude plugin install` does. Never
+// passes -y: a plugin that runs its own install command must be installed by the user in
+// a terminal, where Claude shows that command. `only`: switch it off in Claude, so only
+// the workstreams that turn it On get it.
+async function installPlugin(id, { only = false } = {}) {
+  if (!/^[\w.+-]{1,100}@[\w.+-]{1,100}$/.test(String(id))) throw new Error('bad plugin id');
+  const entry = (await catalog()).find(p => p.id === id);
+  if (!entry) throw new Error('That plugin is not in a directory Claude Code knows');
+  const inTerminal = `This plugin is installed by running a command, which Claude Code shows you first. Install it in a terminal: claude plugin install ${id}`;
+  if (entry.runsCommand) throw new Error(inTerminal);
+  // Prints {"command":"install","outcome":"failed","message":…,"failureCode":…} on a line.
+  const r = await claude.run(['plugin', 'install', id, '--json'], { timeout: 180000 });
+  let j = null;
+  try { j = JSON.parse(r.out.split(/\r?\n/).filter(l => l.trim().startsWith('{')).pop()); } catch {}
+  if (!r.ok || j?.outcome === 'failed') {
+    const why = String(j?.message || r.out).trim().split('\n')[0].slice(0, 300);
+    if (/confirm|--yes|\s-y\b|command/i.test(`${why} ${j?.failureCode || ''}`)) throw new Error(inTerminal);
+    throw new Error(why || 'claude plugin install failed');
+  }
+  if (only) await claude.run(['plugin', 'disable', id], { timeout: 60000 });
+  await plugins({ refresh: true });
+  return { id, only };
+}
+
+async function updateCatalog() {
+  const r = await claude.run(['plugin', 'marketplace', 'update'], { timeout: 180000 });
+  await plugins({ refresh: true });
+  return { ok: r.ok, out: r.out.trim().split('\n').slice(-3).join('\n') };
+}
+
 // A user skill copied into the project's .claude/skills, so it travels with the
 // repository. Only a folder directly under ~/.claude/skills; never overwrites.
 function copySkillToProject(folder, skillFile) {
@@ -187,4 +245,4 @@ function removeProjectRule(folder, key) {
   return { removed };
 }
 
-module.exports = { plugins, pluginCost, skills, skillInfo, mcpServers, copySkillToProject, projectRules, removeProjectRule, mask };
+module.exports = { plugins, pluginCost, skills, skillInfo, mcpServers, copySkillToProject, projectRules, removeProjectRule, mask, catalog, installPlugin, updateCatalog };

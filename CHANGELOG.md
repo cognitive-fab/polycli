@@ -1,5 +1,8 @@
 # Changelog
 
+## Unreleased
+- **Browse plugins**: ⚙ Settings → Plugins and skills → **Browse plugins…** searches the official plugin directory (and the marketplaces you added) and installs a plugin, by default for this workstream only (off in Claude, On here).
+
 ## 0.4.0 — 2026-11-26
 - **Plugins and skills per workstream**: ⚙ Settings → Plugins and skills switches plugins on or off for a workstream (with the tokens each adds to every request) and sets each of your own and the project's skills to on, name only, only when typed, or off; copy one of your skills into the project.
 - **MCP servers and permission profiles per workstream**: ⚙ Settings → MCP and permissions switches MCP servers off, picks a permission profile (Standard, No publishing, Careful, Live systems; editable in ⚙ → Edit profiles…) and adds the workstream's own deny, ask and allow rules and permission mode. The project's saved "always allow" rules are listed, and those holding a password or key, or allowing a whole tool, can be removed.

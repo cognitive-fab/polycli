@@ -184,6 +184,7 @@ A workstream's **⚙ Settings** has four tabs: **General** (name, color, Cowork 
 **⚙ Settings → Plugins and skills** sets what the workstream's Claude sessions load:
 
 - **Plugins**: each installed plugin with the tokens it adds to every request. *As in Claude* follows `claude plugin enable/disable`; **On** and **Off** apply to this workstream only. The line on top adds up the context the plugins that are on cost.
+- **Browse plugins…** lists the plugins in the directories Claude Code knows (the official directory and any marketplace you added), with search and filters by category and directory. **Install** runs `claude plugin install`; with **Install for this workstream only** ticked (the default) the plugin is switched off in Claude and **On** here, so your other workstreams don't pay for it. A plugin installed by running a command of its own says *in a terminal*: install it there, where Claude Code shows the command first. **Update directories** fetches their latest lists. Restart the workstream's sessions to load a new plugin.
 - **Skills**: your own and the project's skills can each be **On**, **Name only** (usable, but its description stays out of every request), **Only when I type it** (`/name`) or **Off**. A plugin's skills follow their plugin. **Copy to project** puts one of your skills into the project's `.claude/skills`, so it travels with the repository.
 
 **⚙ Settings → MCP and permissions**:
