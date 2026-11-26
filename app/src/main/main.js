@@ -187,6 +187,8 @@ const OPS = {
   pluginCatalog: a => require('./claudeconfig').catalog({ refresh: !!a.refresh }),
   updatePluginCatalog: () => require('./claudeconfig').updateCatalog(),
   installPlugin: async a => {
+    // "Only for this workstream" needs the workstream, or the plugin ends up off everywhere.
+    if (a.only) manager.ws(a.workstreamId);
     const r = await require('./claudeconfig').installPlugin(String(a.id), { only: !!a.only });
     // "Only for this workstream": it is off in Claude, and On here.
     if (a.only && a.workstreamId) {
