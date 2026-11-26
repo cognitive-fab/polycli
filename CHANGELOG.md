@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 — 2026-11-26
 - **Plugins and skills per workstream**: ⚙ Settings → Plugins and skills switches plugins on or off for a workstream (with the tokens each adds to every request) and sets each of your own and the project's skills to on, name only, only when typed, or off; copy one of your skills into the project.
 - **MCP servers and permission profiles per workstream**: ⚙ Settings → MCP and permissions switches MCP servers off, picks a permission profile (Standard, No publishing, Careful, Live systems; editable in ⚙ → Edit profiles…) and adds the workstream's own deny, ask and allow rules and permission mode. The project's saved "always allow" rules are listed, and those holding a password or key, or allowing a whole tool, can be removed.
 - **Context meter and hand-off**: each session header shows how full the context is, and the top bar your plan's 5-hour and weekly usage. Near full: **Compact**, or **Hand off** to a new session from a note Claude writes and you can edit.

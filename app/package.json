@@ -1,7 +1,7 @@
 {
   "name": "polycli",
   "productName": "polycli",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "A Windows terminal for Claude Code workstreams",
   "author": "cognitive-fab",
