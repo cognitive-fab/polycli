@@ -834,7 +834,7 @@ async function runRedraw({ app, win, manager }) {
     await check('switched back');
     // The pane mounted again from a scrollback that no longer holds the start of the
     // session (Claude Code's switch to the alternate screen): it must still draw in place.
-    report.trimmed = manager.pty.modes.has(`s:${sid}`);
+    report.trimmed = manager.pty.modes.get(`s:${sid}`)?.get("1049") === "h";   // the switch to the alternate screen was dropped
     await longOut(15);
     await waitFor(() => S().state === 'busy', 30000, 'busy').catch(() => {});
     await waitFor(() => S().state === 'idle', 180000, 'answer after switch');

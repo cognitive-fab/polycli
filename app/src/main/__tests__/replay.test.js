@@ -27,6 +27,12 @@ test('a trimmed scrollback replays the modes set before its start', () => {
   assert.ok(r.endsWith(b));
 });
 
+test('a cut inside a sequence followed by long plain text moves back to its start', () => {
+  const c = client();
+  data(c, '\x1b[?1049h' + 'a'.repeat(256 * 1024 - 4));   // the raw cut falls 4 characters into the sequence
+  assert.ok(c.replay('s:1').startsWith('\x1b[?1049h'));
+});
+
 test('a mode switched off after the cut is replayed in order', () => {
   const c = client();
   data(c, '\x1b[?1049h');

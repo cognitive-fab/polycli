@@ -50,8 +50,12 @@ class PtyClient extends EventEmitter {
         // scrolled into the scrollback (repeated messages, leftovers after a resize),
         // and the wheel scrolled those instead of Claude's transcript.
         let cut = b.length - SCROLLBACK;
-        const esc = b.indexOf('\x1b', cut);
-        if (esc !== -1 && esc - cut < 4096) cut = esc;
+        const after = b.indexOf('\x1b', cut);
+        const before = b.lastIndexOf('\x1b', cut);
+        if (after !== -1 && after - cut < 4096) cut = after;
+        else if (before !== -1 && cut - before < 4096) cut = before;   // keeps up to 4 KB more
+        // No escape within 4 KB either side: plain text, cut between characters.
+        else if (/[\udc00-\udfff]/.test(b[cut])) cut++;
         if (!this.modes.has(m.id)) this.modes.set(m.id, new Map());
         trackModes(this.modes.get(m.id), b.slice(0, cut));
         b = b.slice(cut);
