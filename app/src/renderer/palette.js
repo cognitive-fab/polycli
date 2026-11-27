@@ -60,6 +60,7 @@ export function openPalette(h) {
     const n = curSession.name;
     cmd('restart', `Restart ${n}`, 'session', () => call('restartSession', { id: curSession.id }));
     cmd('review', `Run /code-review in ${n}`, 'session', () => actions.reviewLight(curSession.id));
+    cmd('justify', `Justify the diff in ${n}`, 'session: why each change is needed; changes nothing', () => actions.justifyDiff(curSession.id), curSession.state === 'idle');
     cmd('compact', `Compact ${n}`, 'session: /compact', () => call('compactSession', { id: curSession.id }).then(() => toast('Compacting the conversation')), curSession.state === 'idle');
     cmd('handoff', `Hand off ${n} to a new session…`, 'session', () => actions.handOff(curSession.id), curSession.state === 'idle');
     cmd('commit', `Commit in ${n}`, 'git', () => actions.act('git-commit', curSession.id), !!curSession.git);

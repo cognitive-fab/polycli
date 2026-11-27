@@ -1,6 +1,8 @@
 # Changelog
 
 ## Unreleased
+- **Justify the diff**: from the code-review light's dialog or Ctrl+K, Claude says why each change in its diff is needed and lists those it can't justify (unrequested changes, debugging leftovers, unneeded guards), changing nothing. Adapted from the pre-submit diff audit in Goel et al., *How Much Do Coding Agents Over-Edit, and Why?* (arXiv 2611.34875).
+- The code-review light, in a project without polywatch, counts changed lines of code only: tests, docs, lockfiles and generated files no longer turn it orange.
 - **Browse plugins**: ⚙ Settings → Plugins and skills → **Browse plugins…** searches the official plugin directory (and the marketplaces you added) and installs a plugin, by default for this workstream only (off in Claude, On here).
 - **Repeated messages in a Claude pane fixed**: after switching away from a workstream and back, a long-running session's pane could draw Claude's screen into the scrollback over and over (the same lines repeated, leftovers after a resize), and the wheel scrolled those copies instead of Claude's transcript. The pane is rebuilt from the last 256 KB of output, which no longer held Claude's switch to its full-screen mode; polycli now keeps those modes and replays them first.
 

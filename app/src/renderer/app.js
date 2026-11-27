@@ -430,12 +430,18 @@ function reviewLightDialog(sid) {
     ${l.files.length ? `<p class="hint">The review would look at: <code>${l.files.map(esc).join('</code> <code>')}</code></p>` : ''}
     ${!idle ? '<p class="warn-text">Claude is working in this session; a review can start once it is idle.</p>' : ''}
     <div class="modal-actions">${r.allCount ? '<button type="button" class="btn" data-findings-btn style="margin-right:auto">Findings…</button>' : ''}<button type="button" class="btn" data-cancel>Close</button>
+      <button type="button" class="btn" data-justify ${idle ? '' : 'disabled'} title="Claude says why each change is needed and lists the ones it can't justify (unrequested changes, debugging leftovers, unneeded guards). It changes nothing.">Justify the diff</button>
       <button type="button" class="btn" data-run="all" ${idle ? '' : 'disabled'} title="/code-review on everything that changed">Review everything</button>
       <button type="button" class="btn" data-run="fix" ${idle ? '' : 'disabled'} title="/code-review ${l.level} … --fix: review and fix what it finds">Review and fix</button>
       <button class="btn primary" ${idle ? '' : 'disabled'}>Run /code-review ${l.level}</button></div>`,
   async () => { await call('runCodeReview', { id: sid }); toast('/code-review started'); });
   form.querySelectorAll('[data-run]').forEach(b => b.onclick = async () => { $('#modalBack').hidden = true; await call('runCodeReview', { id: sid, fix: b.dataset.run === 'fix', allFiles: b.dataset.run === 'all' }); toast('/code-review started'); });
   form.querySelector('[data-findings-btn]')?.addEventListener('click', () => findingsDialog(`s:${sid}`));
+  form.querySelector('[data-justify]').onclick = () => { $('#modalBack').hidden = true; justifyDiff(sid); };
+}
+async function justifyDiff(sid) {
+  await call('justifyDiff', { id: sid });
+  toast('Claude is going through its diff; it changes nothing');
 }
 
 // Confirmed polywatch findings with no outcome: for a session (s:id) or a workstream (w:id).
@@ -1846,6 +1852,7 @@ const paletteActions = {
   wsSettings: ws => wsSettingsDialog(ws),
   reviewLight: sid => (reviewOf(sid) ? reviewLightDialog(sid) : call('runCodeReview', { id: sid }).then(() => toast('/code-review started'))),
   handOff: sid => handOffDialog(sid),
+  justifyDiff: sid => justifyDiff(sid),
   findings: target => findingsDialog(target),
   appSettings: () => appSettingsDialog(),
   help: () => helpDialog(),

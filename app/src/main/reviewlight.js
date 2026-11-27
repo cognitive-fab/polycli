@@ -13,6 +13,32 @@ const ORANGE = 3, RED = 6;                 // score thresholds
 const GAP_LINES_FLOOR = 300;               // unchecked lines that are never learned away at push time
 const posix = f => String(f || '').replace(/\\/g, '/').replace(/^\.claude\/worktrees\/[^/]+\//, '').replace(/^\.\//, '');
 
+// Changed lines that count toward a review when polywatch isn't there: code and config,
+// not tests, docs, lockfiles, generated or binary files. Most of what agents add beyond
+// the code is tests and docs, and patch size is no guide to unneeded code (Goel et al.,
+// arXiv 2611.34875: AUROC 0.48 for size against 0.72 for their necessity check).
+const NOT_CODE = [
+  /(^|\/)(tests?|__tests__|specs?|testdata|fixtures?|e2e)\//i,
+  /\.(test|spec)\.[a-z0-9]+$/i, /(^|\/)test_[^/]*\.py$/i, /_test\.(go|py|rb|rs|exs?)$/i, /Tests?\.(java|kt|cs|swift)$/,
+  /\.(md|mdx|markdown|rst|adoc|txt)$/i, /(^|\/)docs?\//i, /(^|\/)(LICENSE|CHANGELOG|AUTHORS|NOTICE)[^/]*$/i,
+  /(^|\/)(package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|Cargo\.lock|poetry\.lock|uv\.lock|Pipfile\.lock|go\.sum|composer\.lock|Gemfile\.lock|packages\.lock\.json)$/i,
+  /(^|\/)(dist|build|out|vendor|node_modules|coverage|__snapshots__)\//i, /\.(snap|map|min\.js|min\.css)$/i,
+  /\.(png|jpe?g|gif|ico|icns|webp|svg|pdf|zip|woff2?|ttf|otf|mp4|mp3|wav)$/i,
+];
+const isCodeFile = f => !NOT_CODE.some(re => re.test(posix(f)));
+// `git diff --numstat` → code lines added and deleted. Renames read "a => b" or
+// "dir/{a => b}/f"; binary files show "-".
+function codeLines(numstat) {
+  let n = 0;
+  for (const line of String(numstat || '').split('\n')) {
+    const m = /^(\d+|-)\t(\d+|-)\t(.+)$/.exec(line.trim());
+    if (!m || m[1] === '-') continue;
+    const file = m[3].replace(/\{[^{}]*? => ([^{}]*)\}/g, '$1').replace(/^.* => /, '').replace(/\/\//g, '/');
+    if (isCodeFile(file)) n += +m[1] + +m[2];
+  }
+  return n;
+}
+
 // Did polywatch leave this turn (partly) unchecked? → { lines, why } or null.
 function coverageGap(r) {
   const lines = r.features?.changedLines || 0;
@@ -68,7 +94,7 @@ function light({ reviews = [], open = [], recent = [], gitLines = 0, polywatch =
     gapFiles.forEach(f => files.add(f));
     reasons.push({ kind: 'gap', text: polywatch
       ? `polywatch didn't fully check ${gapLines} changed line${gapLines === 1 ? '' : 's'} (${[...whys].join(', ')})${gapFiles.size ? `: ${[...gapFiles].slice(0, 3).join(', ')}${gapFiles.size > 3 ? '…' : ''}` : ''}`
-      : `polywatch isn't set up in this project: ${gapLines} changed line${gapLines === 1 ? '' : 's'} unreviewed`, files: [...gapFiles] });
+      : `polywatch isn't set up in this project: ${gapLines} changed line${gapLines === 1 ? '' : 's'} of code unreviewed (tests and docs not counted)`, files: [...gapFiles] });
   }
 
   // 2. Interactions across turns: risky files changed in 3+ turns or by 2+ sessions.
@@ -136,4 +162,4 @@ function reviewFindingsFrom(text) {
   return out;
 }
 
-module.exports = { light, learnedFactor, coverageGap, reviewFindingsFrom, posix, ORANGE, RED };
+module.exports = { light, learnedFactor, coverageGap, reviewFindingsFrom, posix, isCodeFile, codeLines, ORANGE, RED };

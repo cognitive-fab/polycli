@@ -894,6 +894,75 @@ async function runHandoff({ app, manager }) {
   app.exit(report.ok ? 0 : 1);
 }
 
+// Justify the diff: the work asked for (a function) sits next to a debug line nobody asked
+// for. "Justify the diff" from the review-light dialog must name the
+// debug line as unjustified and change nothing (the file and the repository stay as they were).
+async function runJustify({ app, win, manager }) {
+  const report = { phase: 'justify' };
+  let sid = null;
+  const repo = path.join(FOLDER, `justify-smoke-${Date.now()}`);
+  const js = s => win.webContents.executeJavaScript(s);
+  try {
+    win.showInactive();
+    fs.mkdirSync(repo, { recursive: true });
+    const { execFileSync } = require('child_process');
+    const g = (...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8' });
+    g('init', '-q'); g('config', 'user.email', 'smoke@example.com'); g('config', 'user.name', 'smoke');
+    const file = path.join(repo, 'calc.js');
+    fs.writeFileSync(file, 'function mul(a, b) {\n  return a * b;\n}\n\nmodule.exports = { mul };\n');
+    g('add', '.'); g('commit', '-qm', 'init');
+    const ws = manager.createWorkstream({ name: 'justify-test', folder: repo });
+    const s = await manager.newSession({ workstreamId: ws.id, role: 'justify', model: 'haiku' });
+    sid = s.id;
+    const S = () => manager.session(sid);
+    await waitFor(() => S().state === 'untrusted' || S().state === 'idle', 60000, 'trust prompt or idle');
+    if (S().state === 'untrusted') {
+      await waitFor(() => manager.pty.isLive(`t:${sid}`), 20000, 'trust pane');
+      await sleep(4000);
+      manager.pty.write(`t:${sid}`, '\x1b[B'); await sleep(500); manager.pty.write(`t:${sid}`, '\r');
+      await sleep(6000);
+      manager.pty.write(`t:${sid}`, '/exit'); await sleep(500); manager.pty.write(`t:${sid}`, '\r');
+    }
+    await waitFor(() => S().state === 'idle' && manager.pty.isLive(`s:${sid}`), 90000, 'idle');
+    // The work, written here so the test doesn't depend on how Claude edits.
+    fs.writeFileSync(file, "function mul(a, b) {\n  console.log('DEBUG mul', a, b);\n  return a * b;\n}\n\nfunction add(a, b) {\n  return a + b;\n}\n\nmodule.exports = { mul, add };\n");
+    await manager.submitPrompt(sid, 'Context: the task here was to add a function add(a, b) that returns a + b to calc.js and export it next to mul. That change has been made and is not committed. Reply with exactly OK.');
+    await waitFor(() => S().state === 'idle' && (S().promptSeq || 0) >= 1 && S().lastMessage, 120000, 'context taken');
+    const before = { text: fs.readFileSync(file, 'utf8'), head: g('rev-parse', 'HEAD').trim(), status: g('status', '--porcelain') };
+    const seq = S().promptSeq || 0;
+    manager.setUi({ activeTab: `s:${sid}` });
+    await sleep(2500);
+    await js(`document.querySelector('.rv-light').click()`);
+    await sleep(800);
+    await js(`document.querySelector('[data-justify]').click()`);
+    await waitFor(() => (S().promptSeq || 0) > seq, 30000, 'justify prompt sent');
+    for (let i = 0; i < 6; i++) {
+      await waitFor(() => S().state === 'idle' || S().state === 'needs-you', 240000, 'audit done or a question');
+      if (S().state === 'idle') break;
+      manager.pty.write(`s:${sid}`, '\r'); await sleep(3000);   // a read-only git diff may ask once
+    }
+    const last = require('./sessions').transcriptTail(S().transcriptPath);
+    const answer = (last?.message?.content || []).map(c => c.text || '').join('');
+    const after = { text: fs.readFileSync(file, 'utf8'), head: g('rev-parse', 'HEAD').trim(), status: g('status', '--porcelain') };
+    report.answer = answer.slice(0, 1500);
+    report.namesDebugLine = /console\.log|DEBUG/.test(answer);
+    report.unchanged = before.text === after.text && before.head === after.head && before.status === after.status;
+    report.ok = report.namesDebugLine && report.unchanged;
+  } catch (e) {
+    report.ok = false;
+    report.error = String(e.stack || e);
+    if (sid) {
+      const plain = t => manager.pty.scrollback(t).replace(/\[[0-9;?]*[ -\/]*[@-~]|\][^]*/g, ' ').replace(/\s+/g, ' ');
+      report.state = manager.session(sid)?.state;
+      report.screen = { trust: plain(`t:${sid}`).slice(-600), session: plain(`s:${sid}`).slice(-600) };
+    }
+  }
+  if (sid) { try { await manager.deleteSession(sid); } catch {} }
+  fs.writeFileSync(path.join(OUT, 'justify.json'), JSON.stringify(report, null, 2));
+  console.log('SMOKE justify', JSON.stringify({ ok: report.ok, namesDebugLine: report.namesDebugLine, unchanged: report.unchanged, error: report.error }));
+  app.exit(report.ok ? 0 : 1);
+}
+
 // polywatch findings and the code-review light (docs/design/v0.4.md §6), on a scratch
 // repository inside the smoke folder with a ledger polycli reads: a confirmed high
 // finding for the session lights the badge and turns the light red; recording it as real
@@ -970,6 +1039,7 @@ async function run(ctx) {
   if (process.env.POLYCLI_SMOKE === 'browse') return runBrowse(ctx);
   if (process.env.POLYCLI_SMOKE === 'redraw') return runRedraw(ctx);
   if (process.env.POLYCLI_SMOKE === 'fit') return runFit(ctx);
+  if (process.env.POLYCLI_SMOKE === 'justify') return runJustify(ctx);
   if (process.env.POLYCLI_SMOKE === 'packaged') return runPackaged(ctx);
   if (process.env.POLYCLI_SMOKE === 'bridge') return runBridge(ctx);
   if (process.env.POLYCLI_SMOKE === 'help') return runHelp(ctx);

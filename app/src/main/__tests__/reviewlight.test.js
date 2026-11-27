@@ -83,3 +83,25 @@ test('/code-review findings are read from its Markdown result', () => {
   const f = reviewFindingsFrom('## Findings\n\n**sum.js:1 — Off-by-one**\n\n**app/src/main/hooks.js:42 — race**');
   assert.deepEqual(f, [{ file: 'sum.js', line: 1 }, { file: 'app/src/main/hooks.js', line: 42 }]);
 });
+
+test('without polywatch, only code lines count: tests, docs, lockfiles and binaries do not', () => {
+  const { codeLines, isCodeFile } = require('../reviewlight');
+  const numstat = [
+    '120\t30\tsrc/main/sessions.js',
+    '400\t0\tsrc/main/__tests__/sessions.test.js',
+    '80\t5\tdocs/design/v0.5.md',
+    '900\t850\tpackage-lock.json',
+    '-\t-\tresources/icon.png',
+    '10\t2\tREADME.md',
+    '7\t1\t.github/workflows/release.yml',
+    '3\t3\tsrc/{old => new}/util.js',
+    '50\t0\ttests/test_api.py',
+    '4\t0\tpkg/server_test.go',
+  ].join('\n');
+  assert.equal(codeLines(numstat), 150 + 8 + 6);
+  assert.ok(isCodeFile('src/app.ts') && isCodeFile('config/app.yml'));
+  assert.ok(!isCodeFile('src/app.spec.ts') && !isCodeFile('CHANGELOG.md') && !isCodeFile('dist/app.min.js'));
+  // 400 test lines alone don't reach the push-time floor; 300 code lines do.
+  assert.equal(light({ polywatch: false, push: true, gitLines: codeLines('0\t400\ttest/a.test.js') }).color, 'green');
+  assert.equal(light({ polywatch: false, push: true, gitLines: codeLines('300\t0\tsrc/a.js') }).color, 'orange');
+});

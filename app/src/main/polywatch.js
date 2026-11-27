@@ -13,7 +13,7 @@ const { readNewLines } = require('./jsonl');
 const { cleanEnv } = require('./env');
 const { normPath } = require('./paths');
 const store = require('./store');
-const { light, learnedFactor, reviewFindingsFrom, posix } = require('./reviewlight');
+const { light, learnedFactor, reviewFindingsFrom, posix, codeLines } = require('./reviewlight');
 
 const REFRESH_MS = 30000;
 // Findings older than this no longer count as open: a finding nobody rated in two weeks is
@@ -118,9 +118,9 @@ class Polywatch extends EventEmitter {
     const times = await git(dir, ['log', '--format=%ct', `${base}..HEAD`]);
     const ts = (times || '').split('\n').filter(Boolean).map(Number);
     if (!ts.length && !(g.changed + g.untracked)) return null;
-    const stat = await git(dir, ['diff', '--shortstat', base]);
-    const m = /(\d+) insertion/.exec(stat || ''), d = /(\d+) deletion/.exec(stat || '');
-    return { since: ts.length ? Math.min(...ts) * 1000 : Date.now() - 3600e3, lines: (m ? +m[1] : 0) + (d ? +d[1] : 0) };
+    // Code lines only: tests, docs and lockfiles don't call for a review (reviewlight.js).
+    const lines = codeLines(await git(dir, ['diff', '--numstat', base]));
+    return { since: ts.length ? Math.min(...ts) * 1000 : Date.now() - 3600e3, lines };
   }
 
   async refreshAll() {
@@ -182,9 +182,7 @@ class Polywatch extends EventEmitter {
   }
 
   async diffLines(dir) {
-    const stat = await git(dir, ['diff', '--shortstat', 'HEAD']);
-    const m = /(\d+) insertion/.exec(stat || ''), d = /(\d+) deletion/.exec(stat || '');
-    return (m ? +m[1] : 0) + (d ? +d[1] : 0);
+    return codeLines(await git(dir, ['diff', '--numstat', 'HEAD']));
   }
 
   project(root) {

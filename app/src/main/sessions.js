@@ -33,6 +33,7 @@ const ENV_MAX = 50;
 // permission prompt, and nothing for the session to decide about where to write it.
 const HANDOFF_START = '<<<HANDOFF', HANDOFF_END = 'HANDOFF>>>';
 const HANDOFF_PROMPT = `Write a hand-off note for a new Claude session that will continue this work. Cover: the goal; what is done; the decisions made and why; what is in progress; the next steps; the files, commands and branches that matter; and anything you were told to avoid or to be careful with. Write it for a reader who has none of this conversation. Reply with the note only, in Markdown, between a line ${HANDOFF_START} and a line ${HANDOFF_END}. Don't use any tool, and don't continue the work.`;
+const JUSTIFY_PROMPT = 'Audit the diff of the work you did here before it goes further. Look at it with git diff (the uncommitted changes, and the commits on this branch that are not pushed yet). For each hunk, give its file and lines and one line on why it is required for what I asked. Then list separately the hunks you cannot justify that way: changes I did not ask for, leftovers from debugging, guards or checks nothing needs, and code that changes behavior beyond the request. Do not change, revert or commit anything: report only, and I will decide what goes.';
 const SKILL_LEVELS = ['off', 'name-only', 'user-invocable-only'];
 const PLUGIN_ID = /^[\w.@+-]{1,120}$/;
 const SKILL_NAME = /^[\w.:+-]{1,120}$/;
@@ -494,6 +495,17 @@ class Manager extends EventEmitter {
     this.ops.set(s.id, true);
     s.opAt = now();
     try { return await fn(); } finally { this.ops.delete(s.id); s.opAt = now(); this.changed(); }
+  }
+
+  // Justify the diff: the session lists why each hunk of its work is needed and which it
+  // can't justify, changing nothing. Report-only adaptation of the "pre-submit diff audit"
+  // in Goel et al., "How Much Do Coding Agents Over-Edit, and Why?" (arXiv 2611.34875):
+  // such an audit is right two times in three but finds about a third of unneeded code,
+  // and letting it delete broke 1.8% of patches, so the user decides.
+  justifyDiff(id) {
+    const s = this.session(id);
+    if (s.state !== 'idle') throw new Error('Wait until Claude is idle in this session');
+    return this.submitPrompt(id, JUSTIFY_PROMPT);
   }
 
   // ---------- context: compact and hand off (docs/design/v0.4.md §4) ----------

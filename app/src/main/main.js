@@ -213,6 +213,7 @@ const OPS = {
     const files = (a.allFiles ? [] : (pick?.files || [])).filter(f => /^[\w./@+-]+$/.test(f)).slice(0, 10);
     return manager.submitPrompt(s.id, ['/code-review', level, ...files, a.fix ? '--fix' : ''].filter(Boolean).join(' '));
   },
+  justifyDiff: a => manager.justifyDiff(a.id),
   resetReviewLearning: a => polywatch.resetLearning(String(a.root)),
   // Settings export and import, and updates (docs/design/v0.4.md §10).
   exportSettings: async () => {
