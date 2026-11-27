@@ -33,6 +33,22 @@ test('a cut inside a sequence followed by long plain text moves back to its star
   assert.ok(c.replay('s:1').startsWith('\x1b[?1049h'));
 });
 
+test('a cut deep inside a long OSC payload keeps the whole sequence', () => {
+  const c = client();
+  data(c, '\x1b[?2004h' + '\x1b]52;c;' + 'A'.repeat(256 * 1024) + '\x07' + 'b'.repeat(5000));
+  const r = c.replay('s:1');
+  assert.ok(c.scrollback('s:1').startsWith('\x1b]52;c;'));
+  assert.ok(r.startsWith('\x1b[?2004h\x1b]52;c;'));
+});
+
+test('a cut in plain text far from any escape stays where it is', () => {
+  const c = client();
+  data(c, '\x1b[?1049h' + 'p'.repeat(10000) + 'q'.repeat(256 * 1024));
+  const r = c.replay('s:1');
+  assert.ok(r.startsWith('\x1b[?1049h' + 'q'), 'the dropped mode comes first');
+  assert.equal(c.scrollback('s:1').length, 256 * 1024);
+});
+
 test('a mode switched off after the cut is replayed in order', () => {
   const c = client();
   data(c, '\x1b[?1049h');

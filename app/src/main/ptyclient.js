@@ -20,6 +20,24 @@ function trackModes(modes, text) {
   return modes;
 }
 
+// Where the escape sequence starting at `i` ends (the index after it), or Infinity when
+// it hasn't ended yet. CSI ends at its final byte; OSC, DCS, APC, PM and SOS at BEL or
+// ESC \; any other escape is two characters.
+function seqEnd(b, i) {
+  const k = b[i + 1];
+  if (k === undefined) return Infinity;
+  if (k === '[') {
+    for (let j = i + 2; j < b.length; j++) { const c = b.charCodeAt(j); if (c >= 0x40 && c <= 0x7e) return j + 1; }
+    return Infinity;
+  }
+  if (']P_^X'.includes(k)) {
+    const bel = b.indexOf('\x07', i + 2), st = b.indexOf('\x1b\\', i + 2);
+    const ends = [bel === -1 ? Infinity : bel + 1, st === -1 ? Infinity : st + 2];
+    return Math.min(...ends);
+  }
+  return i + 2;
+}
+
 class PtyClient extends EventEmitter {
   constructor() {
     super();
@@ -53,8 +71,9 @@ class PtyClient extends EventEmitter {
         const after = b.indexOf('\x1b', cut);
         const before = b.lastIndexOf('\x1b', cut);
         if (after !== -1 && after - cut < 4096) cut = after;
-        else if (before !== -1 && cut - before < 4096) cut = before;   // keeps up to 4 KB more
-        // No escape within 4 KB either side: plain text, cut between characters.
+        // Inside a sequence that is still open at the cut (a long OSC payload): keep it whole.
+        else if (before !== -1 && seqEnd(b, before) > cut) cut = before;
+        // Plain text: cut between characters.
         else if (/[\udc00-\udfff]/.test(b[cut])) cut++;
         if (!this.modes.has(m.id)) this.modes.set(m.id, new Map());
         trackModes(this.modes.get(m.id), b.slice(0, cut));
