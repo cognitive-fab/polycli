@@ -11,10 +11,20 @@ const SCROLLBACK = 256 * 1024;
 // when the console is already gone. It is harmless noise.
 const NOISE = /AttachConsole failed|conpty_console_list_agent|getConsoleProcessList|^\s*at |Node\.js v|^\s*\^|^\s*$/;
 
+// DEC private modes (CSI ? n h / l), in order: the last setting of each wins.
+const MODE_SEQ = /\x1b\[\?([\d;]+)([hl])/g;
+function trackModes(modes, text) {
+  for (const [, params, v] of text.matchAll(MODE_SEQ)) {
+    for (const n of params.split(';')) if (n) modes.set(n, v);
+  }
+  return modes;
+}
+
 class PtyClient extends EventEmitter {
   constructor() {
     super();
     this.buffers = new Map();
+    this.modes = new Map();    // term id → modes set before the start of its scrollback
     this.totals = new Map();   // characters ever received per terminal: positions that survive trimming
     this.live = new Set();
     this.child = utilityProcess.fork(path.join(__dirname, 'ptyhost.js'), [], { stdio: 'pipe', serviceName: 'polycli-ptyhost' });
@@ -31,8 +41,22 @@ class PtyClient extends EventEmitter {
 
   onMessage(m) {
     if (m.op === 'data') {
-      const b = (this.buffers.get(m.id) || '') + m.data;
-      this.buffers.set(m.id, b.length > SCROLLBACK ? b.slice(-SCROLLBACK) : b);
+      let b = (this.buffers.get(m.id) || '') + m.data;
+      if (b.length > SCROLLBACK) {
+        // Cut where an escape sequence starts, and keep the modes the dropped part set:
+        // Claude Code switches to the alternate screen, mouse reporting and bracketed
+        // paste once, at the start. A pane mounted again from a scrollback without them
+        // drew Claude's full-screen frames into the normal screen, where each redraw
+        // scrolled into the scrollback (repeated messages, leftovers after a resize),
+        // and the wheel scrolled those instead of Claude's transcript.
+        let cut = b.length - SCROLLBACK;
+        const esc = b.indexOf('\x1b', cut);
+        if (esc !== -1 && esc - cut < 4096) cut = esc;
+        if (!this.modes.has(m.id)) this.modes.set(m.id, new Map());
+        trackModes(this.modes.get(m.id), b.slice(0, cut));
+        b = b.slice(cut);
+      }
+      this.buffers.set(m.id, b);
       this.totals.set(m.id, (this.totals.get(m.id) || 0) + m.data.length);
       this.emit('data', m.id, m.data);
     } else if (m.op === 'exit') {
@@ -47,6 +71,7 @@ class PtyClient extends EventEmitter {
   spawn(id, file, args, { cwd, env, cols, rows }) {
     this.live.add(id);
     this.buffers.set(id, '');
+    this.modes.delete(id);
     this.child.postMessage({ op: 'spawn', id, file, args, cwd, env, cols, rows });
   }
   write(id, data) { if (this.live.has(id)) this.child.postMessage({ op: 'write', id, data }); }
@@ -54,6 +79,12 @@ class PtyClient extends EventEmitter {
   kill(id) { if (this.live.has(id)) this.child.postMessage({ op: 'kill', id }); }
   isLive(id) { return this.live.has(id); }
   scrollback(id) { return this.buffers.get(id) || ''; }
+  // What a pane mounted now replays: the modes in force where the scrollback starts,
+  // then the scrollback.
+  replay(id) {
+    const modes = this.modes.get(id);
+    return (modes ? [...modes].map(([n, v]) => `\x1b[?${n}${v}`).join('') : '') + this.scrollback(id);
+  }
   // A position in a terminal's output, and the output since a position. Indexes into
   // scrollback() stop working once it is trimmed (a busy Claude pane fills 256 KB fast).
   pos(id) { return this.totals.get(id) || 0; }
@@ -65,4 +96,4 @@ class PtyClient extends EventEmitter {
   dispose() { try { this.child.kill(); } catch {} }
 }
 
-module.exports = { PtyClient };
+module.exports = { PtyClient, trackModes };

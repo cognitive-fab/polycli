@@ -13,6 +13,13 @@ const COLORS = ['#7c8cf8', '#4cc38a', '#f2b84b', '#f06a6a', '#5aa9ff', '#c38af2'
 
 let S = { workstreams: [], sessions: [], shells: [], ui: {}, plan: null };
 const terms = new Map();          // term id → { term, fit, el, ro }
+// The rows a terminal shows, as text (for the smoke tests).
+window.polycliScreen = (id, all = false) => {
+  const t = terms.get(id);
+  if (!t) return null;
+  const b = t.term.buffer.active;
+  return { cols: t.term.cols, hostWidth: t.el.clientWidth, propose: t.fit.proposeDimensions(), rows: Array.from({ length: all ? b.length : t.term.rows }, (_, i) => b.getLine((all ? 0 : b.viewportY) + i)?.translateToString(true) ?? ''), alt: b.type === 'alternate' };
+};
 const showClosed = new Set();      // workstream ids with the Closed list expanded
 let showArchived = false;           // the Archived list at the bottom of the rail is expanded
 

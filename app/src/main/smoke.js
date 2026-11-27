@@ -744,6 +744,117 @@ async function runBrowse({ app, win, manager }) {
   app.exit(report.ok ? 0 : 1);
 }
 
+// A pane follows the window: a shell's terminal refits when the window narrows and widens.
+async function runFit({ app, win, manager }) {
+  const report = { phase: 'fit', steps: [] };
+  win.showInactive();
+  const wc = win.webContents;
+  try {
+    const ws = manager.createWorkstream({ name: 'fit', folder: FOLDER });
+    const sh = manager.newShell({ workstreamId: ws.id });
+    const probe = async name => {
+      await sleep(1500);
+      const r = await wc.executeJavaScript(`(() => { const s = window.polycliScreen('h:${sh.id}'); return s && { cols: s.cols, hostWidth: s.hostWidth, propose: s.propose, focused: document.hasFocus(), vis: document.visibilityState }; })()`);
+      report.steps.push({ name, win: win.getSize(), ...r });
+    };
+    win.setSize(1800, 1000); await probe('wide');
+    win.setSize(900, 900); await probe('narrow');
+    win.setSize(1800, 1000); await probe('wide again');
+    win.setSize(1200, 900); await probe('middle');
+    report.ok = report.steps.every(x => x.propose && x.cols === x.propose.cols);
+  } catch (e) { report.ok = false; report.error = String(e.stack || e); }
+  console.log('SMOKE fit', JSON.stringify(report));
+  app.exit(report.ok ? 0 : 1);
+}
+
+// Repeated rows in a Claude pane: long output drawn at one width, then the window
+// narrowed, the workstream switched away and back (the pane is mounted again from the
+// scrollback) and widened. After each step the visible rows must have no leftovers:
+// text pushed far right of a blank start, or the same row three times in a row.
+async function runRedraw({ app, win, manager }) {
+  const report = { phase: 'redraw', steps: [] };
+  win.showInactive();   // a hidden window doesn't lay out again when resized
+  const wc = win.webContents;
+  let sid = null;
+  const check = async name => {
+    await sleep(2500);
+    const r = await wc.executeJavaScript(`(() => {
+      const scr = window.polycliScreen('s:${sid}');
+      if (!scr) return { shown: false };
+      const rows = scr.rows, width = scr.cols;
+      const residue = rows.filter(r => r.trim() && /^ +/.exec(r)?.[0].length > Math.max(40, width / 3));
+      let repeats = 0;
+      for (let i = 2; i < rows.length; i++) if (rows[i].trim() && rows[i] === rows[i - 1] && rows[i] === rows[i - 2]) repeats++;
+      const all = window.polycliScreen('s:${sid}', true).rows;
+      let allRepeats = 0;
+      for (let i = 2; i < all.length; i++) if (all[i].trim() && all[i] === all[i - 1] && all[i] === all[i - 2]) allRepeats++;
+      const allResidue = all.filter(r => r.trim() && /^ +/.exec(r)?.[0].length > Math.max(40, width / 3)).length;
+      const rule = rows.filter(r => /^─{8}/.test(r)).map(r => r.length);
+      return { shown: true, rows: rows.length, width, claudeWidth: rule.length ? Math.max(...rule) : null, alt: scr.alt, buffer: all.length, allRepeats, allResidue, residue: residue.length, repeats, sample: residue.slice(0, 3).map(r => r.trim().slice(0, 80)) };
+    })()`);
+    try { fs.writeFileSync(path.join(OUT, `redraw-${report.steps.length + 1}-${name}.png`), (await wc.capturePage()).toPNG()); } catch {}
+    report.steps.push({ name, ...r });
+  };
+  try {
+    win.setSize(1800, 1000);
+    const a = manager.createWorkstream({ name: 'redraw-a', folder: FOLDER });
+    const b = manager.createWorkstream({ name: 'redraw-b', folder: FOLDER });
+    manager.setActive(a.id);
+    const s = await manager.newSession({ workstreamId: a.id, role: 'redraw', model: 'haiku' });
+    sid = s.id;
+    const S = () => manager.session(sid);
+    await waitFor(() => S().state === 'idle' && manager.pty.isLive(`s:${sid}`), 90000, 'idle');
+    await sleep(3000);
+    const longOut = n => manager.submitPrompt(sid, `Without using any tool, write ${n} numbered lines. Each line is its number and then 40 words of lorem ipsum, all on one line. Nothing else.`);
+    await longOut(25);
+    await waitFor(() => S().state === 'idle' && S().promptSeq >= 1 && S().lastMessage, 180000, 'first answer');
+    await check('wide');
+    win.setSize(900, 900);
+    await check('narrowed');
+    await longOut(15);
+    await waitFor(() => S().state === 'idle' && S().promptSeq >= 2, 180000, 'second answer');
+    await check('narrow answer');
+    win.setSize(1800, 1000);
+    await check('widened');
+
+    // Layout changes in quick succession while Claude writes.
+    const split = n => manager.setUi({ split: { layout: n, focus: 0, slots: [{ ws: a.id, tab: `s:${sid}` }, { ws: b.id, tab: null }] } });
+    for (let round = 0; round < 2; round++) {
+      await longOut(12);
+      await waitFor(() => S().state === 'busy', 30000, 'busy').catch(() => {});
+      await sleep(1500 + round * 1000);
+      for (const n of [2, 1, 2, 1, 2, 1, 2].slice(round)) { split(n); await sleep(120); }
+      await waitFor(() => S().state === 'idle', 180000, 'answer');
+      await check(`toggled ${round + 1}`);
+    }
+    split(1);
+    manager.setActive(b.id);
+    await sleep(1500);
+    manager.setActive(a.id);
+    await check('switched back');
+    // The pane mounted again from a scrollback that no longer holds the start of the
+    // session (Claude Code's switch to the alternate screen): it must still draw in place.
+    report.trimmed = manager.pty.modes.has(`s:${sid}`);
+    await longOut(15);
+    await waitFor(() => S().state === 'busy', 30000, 'busy').catch(() => {});
+    await waitFor(() => S().state === 'idle', 180000, 'answer after switch');
+    await check('answer after switch');
+    win.setSize(900, 900);
+    await check('narrowed after switch');
+    win.setSize(1800, 1000);
+    await check('widened after switch');
+    report.ok = report.trimmed && report.steps.every(x => x.shown && x.alt && !x.residue && !x.repeats && !x.allRepeats && !x.allResidue && (x.claudeWidth == null || Math.abs(x.claudeWidth - x.width) <= 1));
+  } catch (e) {
+    report.ok = false;
+    report.error = String(e.stack || e);
+  }
+  if (sid) report.modes = [...new Set((manager.pty.scrollback(`s:${sid}`).match(/\x1b\[\?[\d;]*[hl]/g) || []).map(m => m.slice(2)))];
+  if (sid) { try { await manager.deleteSession(sid); } catch {} }
+  fs.writeFileSync(path.join(OUT, 'redraw.json'), JSON.stringify(report, null, 2));
+  console.log('SMOKE redraw', JSON.stringify(report));
+  app.exit(report.ok ? 0 : 1);
+}
+
 // Context meter and hand-off (docs/design/v0.4.md §4): the status line fills the meter,
 // /compact typed by polycli runs (PreCompact/PostCompact), and a hand-off writes a note
 // and starts the next session from it while closing this one.
@@ -857,6 +968,8 @@ async function run(ctx) {
   if (process.env.POLYCLI_SMOKE === 'handoff') return runHandoff(ctx);
   if (process.env.POLYCLI_SMOKE === 'settings') return runSettings(ctx);
   if (process.env.POLYCLI_SMOKE === 'browse') return runBrowse(ctx);
+  if (process.env.POLYCLI_SMOKE === 'redraw') return runRedraw(ctx);
+  if (process.env.POLYCLI_SMOKE === 'fit') return runFit(ctx);
   if (process.env.POLYCLI_SMOKE === 'packaged') return runPackaged(ctx);
   if (process.env.POLYCLI_SMOKE === 'bridge') return runBridge(ctx);
   if (process.env.POLYCLI_SMOKE === 'help') return runHelp(ctx);

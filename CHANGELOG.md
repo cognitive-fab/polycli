@@ -2,6 +2,7 @@
 
 ## Unreleased
 - **Browse plugins**: ⚙ Settings → Plugins and skills → **Browse plugins…** searches the official plugin directory (and the marketplaces you added) and installs a plugin, by default for this workstream only (off in Claude, On here).
+- **Repeated messages in a Claude pane fixed**: after switching away from a workstream and back, a long-running session's pane could draw Claude's screen into the scrollback over and over (the same lines repeated, leftovers after a resize), and the wheel scrolled those copies instead of Claude's transcript. The pane is rebuilt from the last 256 KB of output, which no longer held Claude's switch to its full-screen mode; polycli now keeps those modes and replays them first.
 
 ## 0.4.0 — 2026-11-26
 - **Plugins and skills per workstream**: ⚙ Settings → Plugins and skills switches plugins on or off for a workstream (with the tokens each adds to every request) and sets each of your own and the project's skills to on, name only, only when typed, or off; copy one of your skills into the project.
