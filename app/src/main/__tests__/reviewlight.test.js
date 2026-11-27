@@ -99,6 +99,7 @@ test('without polywatch, only code lines count: tests, docs, lockfiles and binar
     '4\t0\tpkg/server_test.go',
   ].join('\n');
   assert.equal(codeLines(numstat), 150 + 8 + 6);
+  assert.equal(codeLines('40\t0\t"docs/caf\\303\\251.md"\n9\t0\t"tests/t\\303\\251st.py"\n2\t1\t"src/caf\\303\\251.js"'), 3, 'quoted paths are read without their quotes');
   assert.ok(isCodeFile('src/app.ts') && isCodeFile('config/app.yml'));
   assert.ok(!isCodeFile('src/app.spec.ts') && !isCodeFile('CHANGELOG.md') && !isCodeFile('dist/app.min.js'));
   // 400 test lines alone don't reach the push-time floor; 300 code lines do.

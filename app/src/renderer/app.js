@@ -440,7 +440,7 @@ function reviewLightDialog(sid) {
   form.querySelector('[data-justify]').onclick = () => { $('#modalBack').hidden = true; justifyDiff(sid); };
 }
 async function justifyDiff(sid) {
-  await call('justifyDiff', { id: sid });
+  try { await call('justifyDiff', { id: sid }); } catch { return; }   // call() has shown why
   toast('Claude is going through its diff; it changes nothing');
 }
 

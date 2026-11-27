@@ -33,7 +33,8 @@ function codeLines(numstat) {
   for (const line of String(numstat || '').split('\n')) {
     const m = /^(\d+|-)\t(\d+|-)\t(.+)$/.exec(line.trim());
     if (!m || m[1] === '-') continue;
-    const file = m[3].replace(/\{[^{}]*? => ([^{}]*)\}/g, '$1').replace(/^.* => /, '').replace(/\/\//g, '/');
+    // git quotes a path with unusual characters ("docs/caf\303\251.md").
+    const file = m[3].replace(/^"(.*)"$/, '$1').replace(/\{[^{}]*? => ([^{}]*)\}/g, '$1').replace(/^.* => /, '').replace(/\/\//g, '/');
     if (isCodeFile(file)) n += +m[1] + +m[2];
   }
   return n;

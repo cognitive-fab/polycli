@@ -119,7 +119,7 @@ class Polywatch extends EventEmitter {
     const ts = (times || '').split('\n').filter(Boolean).map(Number);
     if (!ts.length && !(g.changed + g.untracked)) return null;
     // Code lines only: tests, docs and lockfiles don't call for a review (reviewlight.js).
-    const lines = codeLines(await git(dir, ['diff', '--numstat', base]));
+    const lines = codeLines(await git(dir, ['-c', 'core.quotePath=false', 'diff', '--numstat', base]));
     return { since: ts.length ? Math.min(...ts) * 1000 : Date.now() - 3600e3, lines };
   }
 
@@ -182,7 +182,7 @@ class Polywatch extends EventEmitter {
   }
 
   async diffLines(dir) {
-    return codeLines(await git(dir, ['diff', '--numstat', 'HEAD']));
+    return codeLines(await git(dir, ['-c', 'core.quotePath=false', 'diff', '--numstat', 'HEAD']));
   }
 
   project(root) {
